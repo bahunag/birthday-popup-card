@@ -1,9 +1,6 @@
-# 敏感环境变量与临时产出物（严禁提交密钥到 GitHub）
+# 敏感文件与运行缓存
 .env
 .env.*
-!.env.example
-
-# Python 缓存与虚拟环境
 __pycache__/
 *.py[cod]
 .venv/
@@ -13,4 +10,4 @@ venv/
 work/
 output/
 *.html
-!resources/card_shell_template.html
+!resources/shell_p2.html
