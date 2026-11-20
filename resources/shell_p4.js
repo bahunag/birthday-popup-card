@@ -6,6 +6,7 @@ let supProp = false, supStage = false, supPropT = null, supStageT = null, wishMs
 let blowBuf = null, blowSrc = null, blowFlt = null, blowGain = null;
 let micActive = false, micPending = false, micDenied = false, micGranted = false, micSid = 0, micTried = false, micLevel = 0, openingBusy = false;
 let micStream = null, micSrc = null, micGain = null, micAna = null, micRaf = null, micCtx = null;
+const liveStreams = new Set();
 
 function getBlowBuf(ctx) {
   if (blowBuf) return blowBuf;
@@ -51,13 +52,15 @@ function applyFlameWind(p, ms) {
   flameWrapEl.style.opacity = op;
   if (flameHaloEl) { flameHaloEl.style.transform = `scale(${Math.max(.45,1-p*.5).toFixed(3)})`; flameHaloEl.style.opacity = op; }
 }
-function stopTracks(st) { if (st) try { st.getTracks().forEach((t) => { try { t.stop(); } catch {} }); } catch {} }
+function trackStream(st) { if (st) liveStreams.add(st); return st; }
+function stopTracks(st) { if (!st) return; liveStreams.delete(st); try { st.getTracks().forEach((t) => { try { t.stop(); } catch {} }); } catch {} }
+function stopAllLiveStreams() { Array.from(liveStreams).forEach((st) => stopTracks(st)); liveStreams.clear(); }
 /** 停用麦克风并作废在途会话，确保 0 音轨残留 */
 function stopMicDetector() {
   micSid += 1; micPending = micActive = false; micLevel = 0;
   if (micRaf) { cancelAnimationFrame(micRaf); micRaf = null; }
   try { if (micSrc) micSrc.disconnect(); if (micGain) micGain.disconnect(); } catch {}
-  stopTracks(micStream);
+  stopTracks(micStream); stopAllLiveStreams();
   if (micCtx && micCtx !== mCtx) micCtx.close().catch(() => {});
   micStream = micSrc = micGain = micAna = micCtx = null;
   if (musicPlaying && mCtx && mGain) try { mGain.gain.setTargetAtTime(MUSIC_MASTER_GAIN, mCtx.currentTime, .08); } catch {}
@@ -76,7 +79,7 @@ async function requestMicSafe(sid, ms = MIC_TIMEOUT) {
       try { return await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e2) { if (deny(e2)) micDenied = true; return null; }
     }
   };
-  const p = ask().then((st) => { if (st) micGranted = true; if (tout || sid !== micSid) { stopTracks(st); return null; } return st; });
+  const p = ask().then((st) => { if (st) micGranted = true; if (tout || sid !== micSid) { stopTracks(st); return null; } return trackStream(st); });
   if (!ms || ms <= 0) return p;
   const res = await Promise.race([p, new Promise((r) => { tmr = setTimeout(() => { tout = true; r(null); }, ms); })]);
   if (tmr) clearTimeout(tmr);
@@ -84,11 +87,12 @@ async function requestMicSafe(sid, ms = MIC_TIMEOUT) {
 }
 /** 启动 1024 点高精度宽带低频气流吹气检测（隔离八音盒/嗡声/单音） */
 async function startMicWithStream(cStream, cCtx) {
+  if (cStream) trackStream(cStream);
   if (isChristmas || !isOpen || !candleLit || micActive || micPending) { if (cStream) stopTracks(cStream); return false; }
   const sid = ++micSid; micPending = true;
   const ctx = cCtx || ensureAudioCtx();
   if (!ctx) { if (cStream) stopTracks(cStream); if (sid === micSid) micPending = false; return false; }
-  const stream = cStream || await requestMicSafe(sid, MIC_TIMEOUT);
+  const stream = trackStream(cStream || await requestMicSafe(sid, MIC_TIMEOUT));
   if (!stream || sid !== micSid || !isOpen || !candleLit) { stopTracks(stream); if (sid === micSid) micPending = false; return false; }
   try {
     if (ctx.state === 'suspended') await ctx.resume();

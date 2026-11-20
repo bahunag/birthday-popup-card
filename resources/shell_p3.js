@@ -19,7 +19,7 @@ if (isChristmas) {
   $('miniNoteCakeSvg').style.display = $('cssHeaderCakeSvg').style.display = $('wickAnchor').style.display = $('iconWindSvg').style.display = 'none';
   $('miniNoteTreeSvg').style.display = $('cssHeaderTreeSvg').style.display = $('treeLightsLayer').style.display = $('iconStarSvg').style.display = 'block';
   $('miniNoteTxt').textContent = 'MERRY CHRISTMAS';
-  $('cssHeaderTxt').innerHTML = 'MERRY ~<br/>CHRISTMAS !';
+  $('cssHeaderTxt').innerHTML = '<span class="nw">MERRY&nbsp;~</span><br/><span class="nw">CHRISTMAS&nbsp;!</span>';
   $('lblPropAction').textContent = '星灯';
   $('btnPropAction').title = '轻点让圣诞树星灯璀璨绽放或柔和开关';
   $('propLayer').setAttribute('aria-label', '点击圣诞树点亮璀璨星灯');
@@ -79,11 +79,18 @@ if (!isChristmas && cfg.cakeWickPos && typeof cfg.cakeWickPos.leftPct === 'numbe
 /** 渲染圣诞树顶星与树冠闪烁星灯 */
 function renderChristmasTreeLights() {
   if (!isChristmas) return;
-  const tl = cfg.treeLights || {}, ts = tl.topStar || { leftPct: 50, topPct: 8.5 };
-  $('treeTopStar').style.left = ts.leftPct + '%'; $('treeTopStar').style.top = ts.topPct + '%';
+  const tl = cfg.treeLights || {}, starEl = $('treeTopStar');
+  const hasStarKey = Object.prototype.hasOwnProperty.call(tl, 'topStar');
+  const ts = hasStarKey ? tl.topStar : { leftPct: 50, topPct: 8.5 };
+  if (starEl) {
+    if (ts && typeof ts.leftPct === 'number' && typeof ts.topPct === 'number') {
+      starEl.style.display = ''; starEl.style.left = ts.leftPct + '%'; starEl.style.top = ts.topPct + '%';
+    } else { starEl.style.display = 'none'; }
+  }
   const def = [[45,24,9,.1,1.7,1],[56,29,8,.5,2,0],[39,39,10,.9,1.6,1],[58,42,8,1.3,2.1,0],[33,53,10,.3,1.8,1],[50,51,9,.8,1.6,0],[65,55,8,1.4,2.2,1],[30,67,9,.6,1.9,0],[48,65,10,1.1,1.7,1],[67,68,9,.2,2,0]].map(([leftPct,topPct,size,delay,duration,warm])=>({leftPct,topPct,size,delay,duration,warm:!!warm}));
   const wrap = $('treeLightsWrap'); wrap.innerHTML = '';
-  (Array.isArray(tl.lights) && tl.lights.length ? tl.lights : def).forEach((pt) => {
+  const pts = (tl && Array.isArray(tl.lights)) ? tl.lights : def;
+  pts.forEach((pt) => {
     const n = document.createElement('span'), sz = pt.size || 9; n.className = 'sln';
     n.style.cssText = `left:${pt.leftPct}%;top:${pt.topPct}%;width:${sz}px;height:${sz}px;--delay:${pt.delay||0}s;--dur:${pt.duration||1.8}s;--core:${pt.warm?'#fff9d6':'#fff'};--glow:${pt.warm?'rgba(255,214,102,.92)':'rgba(255,244,196,.88)'}`;
     wrap.appendChild(n);

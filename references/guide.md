@@ -20,7 +20,10 @@
    - `Waist-up pop-up card standee preserving exact likeness, warm smile, hairstyle, outfit and pose of {PORTRAIT}, completely re-illustrated in exact {MEDIUM}. Tuck bottom waist into a compact curved floral cluster of {MOTIFS}. Pure flat solid #FFFFFF white background, generous margins, zero drop shadows, zero corner specks.`
 3. **展开内页**
    - 横版 3:2 单图（存 `inside_raw.png`）：`Wide 3:2 flat greeting card inside spread in exact {MEDIUM} matching the new cover. Frame outer edges with {MOTIFS}, keep center calm low-contrast distant scenery and pale path on warm cream paper. No people, no cake, no tree, no text.`
-   - 上下 4:3 版（存 `inside_vertical_raw.png` 2:3 连续图，或先画 `inside_top.png` 再衔接画 `inside_bottom.png` 各 4:3）：`Flat full-bleed 4:3 card inside matching the new cover, lush {MOTIFS} near outer borders, calm pale scenery and gentle path crossing the fold edge cleanly. No people, no cake, no tree, no text.`
+   - 上下 4:3 版 · 方案 A（推荐，单张 2:3 连续上下内页，存 `inside_vertical_raw.png`）：`Vertical 2:3 continuous flat greeting card inside spread in exact {MEDIUM} matching the new cover. Place lush {MOTIFS} around outer borders while keeping the middle 55% quiet pale scenery and a gentle path crossing the horizontal center fold cleanly. No people, no cake, no tree, no text.`
+   - 上下 4:3 版 · 方案 B（两张 4:3 衔接上下内页，先画 `inside_top.png` 再衔接画 `inside_bottom.png`）：
+     - 上半页 `inside_top.png`：`Flat full-bleed 4:3 upper inside page matching the new cover in exact {MEDIUM}, framing top and side borders with {MOTIFS}, leaving quiet pale sky/scenery along the bottom fold edge so it joins the lower page seamlessly. No people, no cake, no tree, no text.`
+     - 下半页 `inside_bottom.png`：`Flat full-bleed 4:3 lower inside page continuing seamlessly from inside_top.png's top fold edge in exact {MEDIUM}, extending the gentle path forward with lush {MOTIFS} along side and bottom borders. No people, no cake, no tree, no text.`
 4. **后景花环拱门**（4:3 纯白底存 `arch_raw.png`）
    - 生日：`Semicircular botanical pop-up birthday archway in exact {MEDIUM} with {MOTIFS}, arched lettering 'HAPPY BIRTHDAY' along top curve and two festive balloons at top-right. Flat level feet on one baseline. Pure flat solid #FFFFFF white background including open center below arch, zero shadows, zero corner specks.`
    - 圣诞：题字换 `MERRY CHRISTMAS`，气球换 `two vintage Christmas baubles`。

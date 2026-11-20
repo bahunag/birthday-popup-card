@@ -1,4 +1,4 @@
-"""立体贺卡纯本地刀模抠图与正宗母版拼接器（V8 云端直装版，仅依赖 Pillow，零联网零密钥）"""
+"""立体贺卡纯本地刀模抠图与正宗母版拼接器（V8.1 云端直装版，仅依赖 Pillow，零联网零密钥）"""
 import argparse, base64, colorsys, hashlib, io, json, os, re, sys, uuid
 from collections import deque
 from pathlib import Path
@@ -83,14 +83,24 @@ def check_vis(rgba):
 
 
 def standee(src, border=12, max_sz=860, hole=False):
+    """识别透明 PNG 或白底图片，清除角落杂点并生成 300g 米白卡纸刀模边。"""
     raw = Image.open(src)
     if max(raw.size) > max_sz: raw.thumbnail((max_sz, max_sz), Image.Resampling.LANCZOS)
-    if raw.mode == "RGBA":
-        ac = raw.getchannel("A"); w0, h0 = raw.size
-        if ac.getextrema()[0] < 20 and max(raw.getpixel(p)[3] for p in ((0,0),(w0-1,0),(0,h0-1),(w0-1,h0-1))) < 30:
-            res = raw.copy(); res.putalpha(ImageChops.darker(ac, clean_dots(ac.point(lambda p: 255 if p > 24 else 0))))
-            bb = res.getbbox(); return res.crop(bb) if bb else res
-    img = raw.convert("RGB"); fg = clean_dots(flood_white(img, hole))
+    if raw.mode in ("RGBA", "LA", "PA") or "transparency" in raw.info:
+        rgba0 = raw.convert("RGBA"); ac = rgba0.getchannel("A"); w0, h0 = rgba0.size
+        if ac.getextrema()[0] < 20:
+            apx = ac.load(); st = max(1, min(w0, h0) // 64)
+            bs = [apx[x, y] for x in range(0, w0, st) for y in (0, h0 - 1)] + [apx[x, y] for y in range(0, h0, st) for x in (0, w0 - 1)]
+            btr = sum(1 for v in bs if v < 30) / float(max(1, len(bs)))
+            ttr = sum(ac.histogram()[:30]) / float(max(1, w0 * h0))
+            if btr >= .55 or (ttr >= .15 and btr >= .35):
+                res = rgba0.copy(); res.putalpha(ImageChops.darker(ac, clean_dots(ac.point(lambda p: 255 if p > 24 else 0))))
+                bb = res.getchannel("A").getbbox(); return res.crop(bb) if bb else res
+        bgw = Image.new("RGBA", rgba0.size, (255, 255, 255, 255))
+        img = Image.alpha_composite(bgw, rgba0).convert("RGB")
+    else:
+        img = raw.convert("RGB")
+    fg = clean_dots(flood_white(img, hole))
     pad = border * 2 + 12; cw, ch = img.width + pad * 2, img.height + pad * 2
     ip = Image.new("RGB", (cw, ch), (255, 255, 255)); ip.paste(img, (pad, pad))
     mp = Image.new("L", (cw, ch), 0); mp.paste(fg, (pad, pad))
@@ -101,7 +111,7 @@ def standee(src, border=12, max_sz=860, hole=False):
     ring = ImageChops.subtract(da, da.filter(ImageFilter.MinFilter(3)))
     pp = Image.composite(Image.new("RGB", (cw, ch), (216, 206, 188)), pp, ring.point(lambda p: int(p * .52)))
     res = Image.composite(ip, pp, mp.filter(ImageFilter.GaussianBlur(.35))).convert("RGBA"); res.putalpha(da)
-    bb = res.getbbox()
+    bb = res.getchannel("A").getbbox()
     return res.crop((max(0, bb[0]-6), max(0, bb[1]-6), min(cw, bb[2]+6), min(ch, bb[3]+6))) if bb else res
 
 
@@ -136,8 +146,11 @@ def erode(m, r):
 
 
 def detect_tree_lights(rgba):
-    """基于 Alpha 内芯实心校验定位顶星与树冠星灯（兼容白雪树与分叉树，0 悬空）。"""
+    """基于 Alpha 内芯实心校验定位顶星与树冠星灯（兼容偏心歪斜树尖、白雪树与分叉树，0 悬空）。"""
     w, h = rgba.size; solid = rgba.convert("RGBA").getchannel("A").point(lambda p: 255 if p > 215 else 0)
+    sbb = solid.getbbox()
+    if not sbb: return {"topStar": None, "lights": []}
+    spx = solid.load()
     tr = max(4, min(10, int(min(w, h) * .02))); tm = erode(solid, tr)
     if not tm.getbbox(): tm = solid
     tpx = tm.load()
@@ -149,24 +162,54 @@ def detect_tree_lights(rgba):
             elif on: on = False; sg.append((s0, x - 1))
         if on: sg.append((s0, w - 1))
         return sg
-    ts = {"leftPct": 50.0, "topPct": 8.5}; pks = []
-    for y in range(int(h * .01), int(h * .28)):
-        ss = scan(tpx, y)
-        if ss:
-            lg = max(ss, key=lambda s: s[1] - s[0])
-            if lg[1] - lg[0] >= 3:
-                pks.append((y, (lg[0] + lg[1]) / 2.0))
-                if len(pks) >= 5: break
+    def scan_peaks(pm):
+        out = []
+        for y in range(int(h * .01), int(h * .35)):
+            ss = scan(pm, y)
+            if ss:
+                lg = max(ss, key=lambda s: s[1] - s[0])
+                if lg[1] - lg[0] >= 2:
+                    out.append((y, (lg[0] + lg[1]) / 2.0))
+                    if len(out) >= 5: break
+        return out
+    def is_solid(pm, ix, iy): return 0 <= ix < w and 0 <= iy < h and pm[ix, iy] > 128
+    def snap_solid(xf, yf):
+        ix, iy = int(round(max(0., min(w - 1., xf)))), int(round(max(0., min(h - 1., yf))))
+        mr = max(20, int(min(w, h) * .12))
+        for pm in (tpx, spx):
+            if is_solid(pm, ix, iy): return float(ix), float(iy)
+            for r in range(1, mr + 1):
+                best = None
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if abs(dx) != r and abs(dy) != r: continue
+                        nx, ny = ix + dx, iy + dy
+                        if is_solid(pm, nx, ny):
+                            d2 = dx * dx + dy * dy
+                            if best is None or d2 < best[0]: best = (d2, nx, ny)
+                if best is not None: return float(best[1]), float(best[2])
+        return None
+    pks = scan_peaks(tpx) or scan_peaks(spx); ts = None
     if pks:
-        ts = {"leftPct": round(max(20., min(80., sum(p[1] for p in pks) / len(pks) / w * 100.)), 2),
-              "topPct": round(max(2.5, min(28., min(int(h * .26), pks[0][0] + max(2, int(h * .012))) / h * 100.)), 2)}
+        cx = max(w * .04, min(w * .96, sum(p[1] for p in pks) / len(pks)))
+        cy = max(h * .025, min(h * .32, min(int(h * .30), pks[0][0] + max(2, int(h * .012)))))
+        snapped = snap_solid(cx, cy)
+        if snapped is not None:
+            sx, sy = snapped
+            lp, tp = round(max(4., min(96., sx / w * 100.)), 2), round(max(2.5, min(32., sy / h * 100.)), 2)
+            vx, vy = min(w - 1, max(0, int(round(lp / 100. * w)))), min(h - 1, max(0, int(round(tp / 100. * h))))
+            if is_solid(spx, vx, vy): ts = {"leftPct": lp, "topPct": tp}
+            else:
+                lp2, tp2 = round(max(4., min(96., int(sx / w * 10000.) / 100.)), 2), round(max(2.5, min(32., int(sy / h * 10000.) / 100.)), 2)
+                if is_solid(spx, min(w - 1, max(0, int(round(lp2 / 100. * w)))), min(h - 1, max(0, int(round(tp2 / 100. * h))))):
+                    ts = {"leftPct": lp2, "topPct": tp2}
     cm = erode(solid, max(12, min(22, int(min(w, h) * .036))))
     if not cm.getbbox(): cm = erode(solid, max(6, tr))
     cpx = cm.load()
     def ok_pt(xf, yf):
         ix, iy = int(round(xf)), int(round(yf))
         return 2 <= ix < w - 2 and 2 <= iy < h - 2 and sum(1 for dy in range(-2, 3) for dx in range(-2, 3) if cpx[ix+dx, iy+dy] > 128) >= 22
-    ct, cb, ls, md2, idx = ts["topPct"] / 100. * h, h * .74, [], max(12., min(w, h) * .075) ** 2, 0
+    ct, cb, ls, md2, idx = (ts["topPct"] / 100. * h if ts else float(sbb[1])), h * .74, [], max(12., min(w, h) * .075) ** 2, 0
     for lr, cnt in zip((.18, .36, .54, .72, .90), (2, 2, 3, 3, 3)):
         yb = int(round(ct + (cb - ct) * lr))
         if not (4 < yb < h - 4): continue
@@ -189,17 +232,17 @@ def detect_tree_lights(rgba):
     return {"topStar": ts, "lights": ls[:13]}
 
 
-def fit_surf(path, sz):
+def fit_surf(path, sz, max_crop_ratio=1.45, mode="auto"):
+    """按目标比例适配封面/内页：支持 auto（超阈值自动保边扩纸底）、contain 与 crop。"""
     img = Image.open(path).convert("RGB"); sw, sh = img.size; dw, dh = sz
-    if sw > 0 and sh > 0:
-        rd = max((sw / float(sh)) / (dw / float(dh)), (dw / float(dh)) / (sw / float(sh)))
-        if rd > 1.45:
-            print(f"[提示] '{os.path.basename(path)}' 比例差异较大（{rd:.2f}x），已自动保边扩纸底保留完整画面。", file=sys.stderr)
-            px = img.load()
-            sm = [px[x, y] for x in range(0, sw, max(1, sw // 24)) for y in (0, sh - 1)] + [px[x, y] for y in range(0, sh, max(1, sh // 24)) for x in (0, sw - 1)]
-            bg = tuple(int(sum(c[i] for c in sm) / len(sm)) for i in range(3)) if sm else (246, 241, 232)
-            cv = Image.new("RGB", sz, bg); ct = ImageOps.contain(img, sz, Image.Resampling.LANCZOS)
-            cv.paste(ct, ((dw - ct.width) // 2, (dh - ct.height) // 2)); return cv
+    rd = max((sw / float(sh)) / (dw / float(dh)), (dw / float(dh)) / (sw / float(sh))) if sw > 0 and sh > 0 else 1.0
+    if mode == "contain" or (mode == "auto" and rd > max_crop_ratio):
+        print(f"[提示] '{os.path.basename(path)}' 比例差 {rd:.2f}x，已保边扩纸底保留完整画面。", file=sys.stderr)
+        px = img.load()
+        sm = [px[x, y] for x in range(0, sw, max(1, sw // 24)) for y in (0, sh - 1)] + [px[x, y] for y in range(0, sh, max(1, sh // 24)) for x in (0, sw - 1)]
+        bg = tuple(int(sum(c[i] for c in sm) / len(sm)) for i in range(3)) if sm else (246, 241, 232)
+        cv = Image.new("RGB", sz, bg); ct = ImageOps.contain(img, sz, Image.Resampling.LANCZOS)
+        cv.paste(ct, ((dw - ct.width) // 2, (dh - ct.height) // 2)); return cv
     return ImageOps.fit(img, sz, Image.Resampling.LANCZOS)
 
 
@@ -272,8 +315,11 @@ def main():
     for k in ("--work-dir","--cover","--character","--inside","--inside-top","--inside-bottom","--inside-left","--inside-right","--arch","--cake","--tree","--style-ref","--style-json","--blessing","--recipient","--lines-text","--closing","--signature","--sub-signature","--card-id"): ap.add_argument(k)
     ap.add_argument("--occasion", choices=("birthday","christmas"), default="birthday")
     ap.add_argument("--fold", choices=("horizontal","vertical"), default="horizontal")
-    ap.add_argument("--strict-redraw-check", action="store_true"); ap.add_argument("--output", required=True)
+    ap.add_argument("--cover-fit", choices=("auto","contain","crop"), default="auto")
+    ap.add_argument("--strict-redraw-check", action="store_true"); ap.add_argument("--allow-draft", action="store_true"); ap.add_argument("--output", required=True)
     a = ap.parse_args(); wd, vert, xm = (Path(a.work_dir) if a.work_dir else None), a.fold == "vertical", a.occasion == "christmas"
+    for flag, val in (("--cover",a.cover),("--character",a.character),("--inside",a.inside),("--inside-top",a.inside_top),("--inside-bottom",a.inside_bottom),("--inside-left",a.inside_left),("--inside-right",a.inside_right),("--arch",a.arch),("--cake",a.cake),("--tree",a.tree),("--style-ref",a.style_ref),("--style-json",a.style_json),("--blessing",a.blessing)):
+        if val and not os.path.isfile(val): ap.error(f"指定的 {flag} 文件不存在: {val}")
     cov = a.cover or (find1(wd,"cover_vertical_raw","cover_4x3_raw","cover_raw") if vert else find1(wd,"cover_raw","cover_3x4_raw"))
     chr_p = a.character or find1(wd,"character_raw")
     ins = a.inside or (find1(wd,"inside_vertical_raw","inside_2x3_raw") if vert else find1(wd,"inside_raw"))
@@ -290,7 +336,11 @@ def main():
     if not cov or not os.path.isfile(cov): ap.error("缺少封面 --cover")
     if not chr_p or not os.path.isfile(chr_p): ap.error("缺少人物 --character")
     if vert and (tp or bp) and not (tp and bp and os.path.isfile(tp) and os.path.isfile(bp)): ap.error("上下拆页须同时提供 --inside-top 与 --inside-bottom")
+    if not vert and (il or ir) and not (il and ir and os.path.isfile(il) and os.path.isfile(ir)): ap.error("左右拆页须同时提供 --inside-left 与 --inside-right")
     if vert and not (tp and bp) and not (ins and os.path.isfile(ins)): ap.error("上下翻折版需要 --inside 或上下内页")
+    if not a.allow_draft:
+        if not vert and not (il and ir) and not (ins and os.path.isfile(ins)): ap.error("左右横版缺少展开内页（--inside 或成对 --inside-left/--inside-right）")
+        if not ar or not os.path.isfile(ar): ap.error("缺少后景花环拱门（--arch 或工作目录 arch_raw）")
 
     rf = a.style_ref or find1(wd,"style_ref")
     if a.strict_redraw_check and not (rf and os.path.isfile(rf)): ap.error("--strict-redraw-check 需要 --style-ref")
@@ -298,7 +348,7 @@ def main():
         if a.strict_redraw_check: raise SystemExit("错误：封面与参考图高度雷同，已拦截打包。")
         print("[警告] 封面与参考图相似度过高。", file=sys.stderr)
 
-    cim = fit_surf(cov, (1000,750) if vert else (750,1000)); cov_u, thm = uri(cim, 88), palette(cim)
+    cim = fit_surf(cov, (1000,750) if vert else (750,1000), max_crop_ratio=1.06, mode=a.cover_fit); cov_u, thm = uri(cim, 88), palette(cim)
     sp = a.style_json or (str(wd / "style_profile.json") if wd and (wd / "style_profile.json").is_file() else None)
     if sp and os.path.isfile(sp):
         try:

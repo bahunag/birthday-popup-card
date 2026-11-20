@@ -6,7 +6,7 @@ description: >-
   装好后先发一条短消息收齐【主题】【版式】【参考图】【真人照】【祝福语】，再分两批并行出图，最后必须运行 scripts/pack_card.py 拼接 resources/ 下 4 个锁定母版分片生成成品（严禁现场重写 HTML）。
 ---
 
-# 手绘 3D 立体弹出式节日贺卡 Skill（V8 云端直装保真版）
+# 手绘 3D 立体弹出式节日贺卡 Skill（V8.1 云端直装保真版）
 
 ## 安装铁律（仅 7 个纯文本文件，零图片、零联网、零密钥）
 1. `SKILL.md`
@@ -46,7 +46,7 @@ description: >-
 2. **第 2 批并行（封面完成后同时起跑 3 路）**：展开内页（横版 3:2 `inside_raw.png` / 上下 4:3 版 `inside_vertical_raw.png` 或衔接的 `inside_top.png` -> `inside_bottom.png`）+ 拱门（4:3 纯白底 `arch_raw.png`，平底双脚同线，拱洞纯白）+ 道具（3:4 纯白底平底：生日 `cake_raw.png` 无火单蜡烛，圣诞 `tree_raw.png` 立体圣诞树）。
 
 ## 第三步：审美自检 -> 运行官方打包器交付
-1. 懒检查依赖：`python -c "import PIL" || python -m pip install -r requirements.txt`
+1. 懒检查依赖：`python -c "import PIL" || python -m pip install "Pillow>=10.0.0"`（若云端沙箱禁止运行时装包，则需宿主环境已预装 Pillow）
 2. 对照 `references/guide.md` 核对全套图（5~6 张，上下拆页查折线接缝），单张不达标只重画该张。
 3. 运行官方唯一纯本地打包器拼接正宗母版：
    ```bash
