@@ -1,11 +1,11 @@
 {
-  "style_summary_en": "warm hand-painted children's storybook watercolor and gouache illustration with fine sepia brown ink outlines, textured natural ivory cotton watercolor paper background, lush botanical garden atmosphere",
+  "art_medium_en": "warm hand-painted children's storybook watercolor and gouache illustration with fine sepia brown ink outlines, matte textured cotton paper finish",
   "paper_texture_en": "300gsm textured warm cream cold-press watercolor paper (#faf6ec)",
-  "decorative_motifs_en": "hanging fuchsia blossoms, sunlit lush green ferns, dainty daisies, whimsical wooden fairytale treehouse, glowing warm lantern, tiny butterflies and party pennants",
-  "cover_scene_idea_en": "A brand-new vertical portrait greeting card illustration in the extracted storybook watercolor style: cascading hanging blossoms and green ferns framing lush garden foliage around a cozy fairytale treehouse patio and whimsical flower pathway, topped with elegant hand-lettered dark botanical green calligraphy reading 'Happy Birthday', rendered cleanly on warm cream watercolor paper.",
-  "portrait_identity_en": "young East Asian woman with shoulder-length straight dark brown hair tucked behind one ear with a tiny yellow blossom, bright gentle smiling expression, wearing a warm khaki trench coat over a white high-neck top, holding a ceramic cup and saucer of latte art coffee with both hands",
+  "decorative_motifs_en": "sunlit meadow blossoms, delicate fern leaves, tiny wildflowers, glowing paper lanterns and soft pastel ribbons",
+  "cover_scene_idea_en": "A brand-new original greeting card cover illustration in the extracted storybook watercolor medium: cascading meadow blossoms framing an airy pastel garden archway and winding path with calm upper breathing space for hand-lettered festival calligraphy on warm cream watercolor paper.",
+  "portrait_identity_en": "friendly smiling young adult waist-up portrait with neat shoulder-length dark hair, cozy cream knit sweater over a light collared shirt, holding a small wrapped gift bouquet gently in both hands",
   "styleTheme": {
-    "styleName": "童话森林水彩风",
+    "styleName": "柔光绘本水彩风",
     "tableInner": "#e7d7bf",
     "tableOuter": "#ceb693",
     "paperCream": "#faf6ec",

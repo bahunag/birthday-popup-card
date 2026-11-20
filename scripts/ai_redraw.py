@@ -23,6 +23,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -31,6 +32,44 @@ from PIL import Image
 
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
+
+# 跨模型通用审美护栏：锁定哑光绘本纸本质感、60-30-10 克制配色与呼吸感留白，严禁 3D 塑料光感与荧光刺眼色
+AESTHETIC_GUARD_EN = (
+    "AESTHETIC GUARDRAILS: Warm matte storybook paper finish with harmonious 60-30-10 low-saturation natural palette, "
+    "generous calm breathing whitespace, delicate organic hand-drawn contours and subtle paper tooth. "
+    "STRICTLY FORBIDDEN: glossy 3D CGI plastic sheen, neon oversaturated colors, waxy airbrushed portrait skin, "
+    "overcrowded noisy backgrounds, gibberish extra letters or watermarks."
+)
+
+
+def sanitize_secret_text(text: Any) -> str:
+    """
+    对错误响应正文、异常消息及 URL 进行彻底脱敏，确保任何 API Key、Token 或占位符密钥绝不被原样泄露。
+    """
+    cleaned = str(text or "")
+    secret_env_names = {
+        "DASHSCOPE_API_KEY",
+        "GEMINI_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+    }
+    for env_k, env_v in os.environ.items():
+        val = (env_v or "").strip()
+        if not val:
+            continue
+        if env_k in secret_env_names or (len(val) >= 6 and any(tag in env_k.upper() for tag in ("KEY", "TOKEN", "SECRET", "PASS"))):
+            cleaned = cleaned.replace(val, "[REDACTED]")
+
+    patterns = (
+        (r"(?i)(bearer\s+)[^\s\"',}]+", r"\1[REDACTED]"),
+        (r"(?i)([?&](?:api_)?key=)[^&\s\"',}]+", r"\1[REDACTED]"),
+        (r"(?i)([\"']?(?:api_?key|authorization|x-api-key|secret|access_token|token)[\"']?\s*[:=]\s*[\"']?)[^\s\"',}]+", r"\1[REDACTED]"),
+        (r"\bsk-[A-Za-z0-9_-]{4,}\b", "[REDACTED]"),
+        (r"\bAIza[A-Za-z0-9_-]{8,}\b", "[REDACTED]"),
+    )
+    for pat, repl in patterns:
+        cleaned = re.sub(pat, repl, cleaned)
+    return cleaned
 
 
 def load_env_files() -> None:
@@ -113,26 +152,43 @@ def http_json_request(
     headers: Optional[Dict[str, str]] = None,
     method: str = "POST",
     timeout: int = 120,
+    max_retries: int = 2,
 ) -> Dict[str, Any]:
-    """发起标准 HTTP JSON 请求，遇到异常时仅返回脱敏错误摘要。"""
+    """发起标准 HTTP JSON 请求（对 429/502/503/504 限流抖动自动退避重试，异常响应与 URL 统一脱敏）。"""
     req_headers = {"Content-Type": "application/json", **(headers or {})}
     data_bytes = json.dumps(payload).encode("utf-8") if payload is not None else None
-    req = urllib.request.Request(url, data=data_bytes, headers=req_headers, method=method)
     ctx = ssl.create_default_context()
-    try:
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as err:
-        body = ""
+    safe_url = sanitize_secret_text(url.split("?")[0])
+    retry_codes = {429, 502, 503, 504}
+
+    for attempt in range(max_retries + 1):
+        req = urllib.request.Request(url, data=data_bytes, headers=req_headers, method=method)
         try:
-            body = err.read().decode("utf-8", errors="ignore")[:500]
-        except Exception:
-            pass
-        raise RuntimeError(f"HTTP {err.code} 请求失败 ({url.split('?')[0]}): {body}") from err
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as err:
+            body = ""
+            try:
+                body = err.read().decode("utf-8", errors="ignore")[:500]
+            except Exception:
+                pass
+            if err.code in retry_codes and attempt < max_retries:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            safe_body = sanitize_secret_text(body)
+            raise RuntimeError(f"HTTP {err.code} 请求失败 ({safe_url}): {safe_body}") from None
+        except urllib.error.URLError as err:
+            if attempt < max_retries:
+                time.sleep(1.2 * (attempt + 1))
+                continue
+            raise RuntimeError(f"网络连接失败 ({safe_url}): {sanitize_secret_text(err.reason)}") from None
+        except Exception as err:
+            raise RuntimeError(f"接口请求异常 ({safe_url}): {sanitize_secret_text(err)}") from None
+    raise RuntimeError(f"接口请求重试耗尽 ({safe_url})")
 
 
 def save_image_from_result(result_ref: str, out_path: str) -> None:
-    """将模型返回的图片 URL 或 base64 DataURI 保存到本地图片文件。"""
+    """将模型返回的图片 URL 或 base64 DataURI 保存到本地图片文件（异常均脱敏）。"""
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     if result_ref.startswith("data:image/"):
         _, b64_part = result_ref.split(",", 1)
@@ -143,8 +199,12 @@ def save_image_from_result(result_ref: str, out_path: str) -> None:
 
     req = urllib.request.Request(result_ref, headers={"User-Agent": "BirthdayPopupCardSkill/1.0"})
     ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, timeout=90, context=ctx) as resp:
-        raw = resp.read()
+    safe_ref = sanitize_secret_text(result_ref.split("?")[0])
+    try:
+        with urllib.request.urlopen(req, timeout=90, context=ctx) as resp:
+            raw = resp.read()
+    except Exception as err:
+        raise RuntimeError(f"下载生成图片失败 ({safe_ref}): {sanitize_secret_text(err)}") from None
     img = Image.open(BytesIO(raw)).convert("RGB")
     img.save(out_path, "PNG", optimize=True)
 
@@ -318,7 +378,7 @@ def generate_image_dashscope(
                     return img_url
                 raise RuntimeError("百炼异步生图任务完成，但响应中未找到图片地址")
             if st in ("FAILED", "CANCELED"):
-                raise RuntimeError(f"百炼生图任务失败: {status_res}")
+                raise RuntimeError(f"百炼生图任务失败: {sanitize_secret_text(status_res)}")
         raise TimeoutError("百炼生图任务轮询超时")
 
     content_blocks: List[Dict[str, str]] = []
@@ -348,7 +408,9 @@ def generate_image_dashscope(
         if task_id:
             return poll_task(task_id)
     except Exception as mm_err:
-        # 若用户配置的模型是纯异步 t2i（如 wanx2.1-t2i-turbo），优雅走异步文生图兜底
+        # 含参考图的重绘若失败，不再静默丢失参考约束；仅无参考图时才兼容纯异步 t2i
+        if ref_images:
+            raise RuntimeError(f"百炼参考图重绘接口失败，为保证画风与人物约束未回退纯文本生图: {sanitize_secret_text(mm_err)}") from None
         fallback_model = os.environ.get("DASHSCOPE_T2I_FALLBACK_MODEL", "wanx2.1-t2i-turbo")
         endpoint_t2i = f"{base_url}/api/v1/services/aigc/text2image/image-synthesis"
         payload_t2i = {
@@ -370,7 +432,9 @@ def generate_image_dashscope(
             if img_url2:
                 return img_url2
         except Exception as fb_err:
-            raise RuntimeError(f"百炼生图均未成功。主接口: {mm_err}; 回退接口: {fb_err}") from fb_err
+            raise RuntimeError(
+                f"百炼生图均未成功。主接口: {sanitize_secret_text(mm_err)}; 回退接口: {sanitize_secret_text(fb_err)}"
+            ) from None
 
     raise RuntimeError("未能从 DashScope 响应中解析出生成图片")
 
@@ -400,15 +464,28 @@ def generate_image_gemini(prompt: str, ref_images: List[str], aspect_ratio: str)
             if inline and inline.get("data"):
                 mime_out = inline.get("mimeType", "image/png")
                 return f"data:{mime_out};base64,{inline['data']}"
-    raise RuntimeError(f"Gemini 未返回图像数据: {res}")
+    raise RuntimeError(f"Gemini 未返回图像数据: {sanitize_secret_text(res)}")
+
+
+def _map_openai_size(size_str: str) -> str:
+    """根据 W*H 或 WxH 比例字符串精准映射至 OpenAI 支持的横/竖/方画幅。"""
+    m = re.match(r"^\s*(\d+)\s*[*xX]\s*(\d+)\s*$", size_str or "")
+    if not m:
+        return "1024x1024"
+    w_val, h_val = int(m.group(1)), int(m.group(2))
+    if w_val > h_val:
+        return "1536x1024"
+    if h_val > w_val:
+        return "1024x1536"
+    return "1024x1024"
 
 
 def generate_image_openai(prompt: str, ref_images: List[str], size_str: str) -> str:
-    """调用 OpenAI 兼容图像生成/编辑接口。"""
+    """调用 OpenAI 兼容图像生成/编辑接口（含参考图编辑严格报错保护及异常响应脱敏）。"""
     api_key = os.environ["OPENAI_API_KEY"]
     base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     model = os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-1")
-    oa_size = "1024x1536" if size_str == "960*1280" else ("1536x1024" if size_str == "1280*854" else "1024x1024")
+    oa_size = _map_openai_size(size_str)
 
     if ref_images:
         # 构造 multipart/form-data 调用 /images/edits 传入参考图
@@ -454,8 +531,21 @@ def generate_image_openai(prompt: str, ref_images: List[str], size_str: str) -> 
                 if item.get("b64_json"):
                     return f"data:image/png;base64,{item['b64_json']}"
                 return item["url"]
-        except Exception:
-            pass
+        except urllib.error.HTTPError as err:
+            err_body = ""
+            try:
+                err_body = err.read().decode("utf-8", errors="ignore")[:500]
+            except Exception:
+                pass
+            raise RuntimeError(
+                f"OpenAI 参考图重绘接口 (/images/edits) 返回 HTTP {err.code}，"
+                f"为保证画风与人物参考约束未回退纯文本生图: {sanitize_secret_text(err_body)}"
+            ) from None
+        except Exception as err:
+            raise RuntimeError(
+                f"OpenAI 参考图重绘接口 (/images/edits) 失败，"
+                f"为保证画风与人物参考约束未回退纯文本生图: {sanitize_secret_text(err)}"
+            ) from None
 
     res = http_json_request(
         f"{base_url}/images/generations",
@@ -552,38 +642,61 @@ def main() -> None:
     cover_scene = profile.get("cover_scene_idea_en", f"enchanting storybook {card_theme_en} garden")
     portrait_desc = profile.get("portrait_identity_en", "friendly smiling person waist-up")
 
+    def run_parallel_batch(batch_name: str, tasks: List[Tuple[str, Any]]) -> None:
+        """按批次并发执行互不依赖的重绘任务，减少排队等待时间。"""
+        if not tasks:
+            return
+        if len(tasks) == 1:
+            tasks[0][1]()
+            return
+        print(f"[并行加速] {batch_name}：同时生成 {', '.join(name for name, _ in tasks)}...")
+        with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+            future_map = {pool.submit(fn): name for name, fn in tasks}
+            errors: List[str] = []
+            for fut in as_completed(future_map):
+                t_name = future_map[fut]
+                try:
+                    fut.result()
+                except Exception as exc:
+                    errors.append(f"{t_name}: {sanitize_secret_text(exc)}")
+            if errors:
+                raise RuntimeError(f"{batch_name}部分重绘失败 -> " + " | ".join(errors))
+
+    # ==================== 第 1 批并行：封面 + 人物（均只依赖原始参考图） ====================
+    batch1: List[Tuple[str, Any]] = []
     if "cover" in steps:
         cover_file = "cover_vertical_raw.png" if vertical else "cover_raw.png"
         cover_size = "1280*960" if vertical else "960*1280"
         cover_ratio = "4:3" if vertical else "3:4"
         orient_en = "horizontal landscape 4:3" if vertical else "vertical portrait 3:4"
-        print(f"[2/6] 正在按提取画风从零重绘全新《{greeting_title}》{cover_ratio} 封面（绝不直接贴原图）...")
         p_cover = (
             f"Create a BRAND-NEW original {orient_en} {card_theme_en} greeting card cover illustration strictly matching "
             f"the artistic medium and brushwork of the attached style reference ({art_medium}, {paper_tex}). "
             f"Scene: {cover_scene}. Border motifs inspired by {motifs}. "
-            f"Feature graceful hand-lettered artistic typography reading '{greeting_title}' cleanly in the upper space. "
-            f"DO NOT copy or paste the original reference layout or any unrelated original text. Full-bleed flat 2D card art."
+            f"Feature graceful hand-lettered artistic typography reading '{greeting_title}' cleanly in the upper space (leave 30-40% quiet breathing negative space). "
+            f"DO NOT copy or paste the original reference layout or any unrelated original text. Full-bleed flat 2D card art. "
+            f"{AESTHETIC_GUARD_EN}"
         )
-        run_redraw_asset(provider, p_cover, [args.style_ref], cover_size, cover_ratio, str(out_dir / cover_file))
+        batch1.append(("全新封面", lambda: (
+            print(f"[2/6] 正在按提取画风从零重绘全新《{greeting_title}》{cover_ratio} 封面..."),
+            run_redraw_asset(provider, p_cover, [args.style_ref], cover_size, cover_ratio, str(out_dir / cover_file)),
+        )))
 
     if "character" in steps:
-        print("[3/6] 正在按封面画风重绘中央真人立体人物（pure #FFFFFF 白底）...")
         p_char = (
             f"Waist-up character illustration for a paper pop-up {card_theme_en} card standee. "
             f"Preserve the exact facial likeness, warm expression, hairstyle, clothing, and hand pose of the person in Image 2: {portrait_desc}. "
             f"Completely re-illustrate the figure in the exact artistic medium and palette of Image 1 ({art_medium}). "
             f"Center with generous white space on all sides, tucking the bottom waist smoothly into a compact curved floral cluster of {motifs}. "
-            f"Pure flat solid white background (#FFFFFF), zero drop shadows, zero text, zero corner specks, crisp outline for die-cutting."
+            f"Pure flat solid white background (#FFFFFF), zero drop shadows, zero text, zero corner specks, crisp outline for die-cutting. "
+            f"{AESTHETIC_GUARD_EN}"
         )
-        run_redraw_asset(
-            provider,
-            p_char,
-            [args.style_ref, args.portrait],
-            "960*1280",
-            "3:4",
-            str(out_dir / "character_raw.png"),
-        )
+        batch1.append(("中央人物", lambda: (
+            print("[3/6] 正在按封面画风重绘中央真人立体人物（pure #FFFFFF 白底）..."),
+            run_redraw_asset(provider, p_char, [args.style_ref, args.portrait], "960*1280", "3:4", str(out_dir / "character_raw.png")),
+        )))
+
+    run_parallel_batch("第 1 批（封面+人物）", batch1)
 
     cover_for_context = (
         str(out_dir / "cover_vertical_raw.png")
@@ -591,59 +704,80 @@ def main() -> None:
         else (str(out_dir / "cover_raw.png") if (out_dir / "cover_raw.png").is_file() else args.style_ref)
     )
 
+    # ==================== 第 2 批并行：内页 + 花环拱门 + 节日道具（均依赖新封面） ====================
+    batch2: List[Tuple[str, Any]] = []
     if "inside" in steps and vertical:
-        print("[4/6] 正在重绘上下翻折 4:3 长方形双页同画风连续内页...")
         shared = (
             f"Flat full-bleed horizontal landscape 4:3 paper card artwork, exact {art_medium} and palette of the attached cover. "
             f"Use {paper_tex} with edge motifs of {motifs}. No people, no cake, no Christmas tree, no lettering, no mockup. "
         )
         top_path = out_dir / "inside_top.png"
-        run_redraw_asset(provider, shared + (
-            "Upper 4:3 page: lush decorative motifs across the top and outer left/right borders, faint distant scenery and soft pathway leading cleanly to the bottom fold edge."
-        ), [cover_for_context], "1280*960", "4:3", str(top_path))
-        run_redraw_asset(provider, shared + (
-            "Lower 4:3 page: continue the pale watercolour landscape seamlessly across the top fold edge, with a calm path through the center and richer foliage near left, right, and bottom edges. "
-            "Match the paper colour of the supplied upper page so pop-up figures stand out clearly."
-        ), [cover_for_context, str(top_path)], "1280*960", "4:3", str(out_dir / "inside_bottom.png"))
+
+        def _gen_vertical_inside() -> None:
+            # 上下内页保持原有先后衔接顺序，确保折痕色彩和景物连贯一致
+            print("[4/6] 正在重绘上下翻折 4:3 长方形双页同画风连续内页（上页 -> 下页衔接）...")
+            run_redraw_asset(provider, shared + (
+                "Upper 4:3 page: lush decorative motifs across the top and outer left/right borders, faint distant scenery and soft pathway leading cleanly to the bottom fold edge. "
+                + AESTHETIC_GUARD_EN
+            ), [cover_for_context], "1280*960", "4:3", str(top_path))
+            run_redraw_asset(provider, shared + (
+                "Lower 4:3 page: continue the pale watercolour landscape seamlessly across the top fold edge, with a calm path through the center and richer foliage near left, right, and bottom edges. "
+                "Match the paper colour of the supplied upper page so pop-up figures stand out clearly. "
+                + AESTHETIC_GUARD_EN
+            ), [cover_for_context, str(top_path)], "1280*960", "4:3", str(out_dir / "inside_bottom.png"))
+
+        batch2.append(("上下双页内页", _gen_vertical_inside))
     elif "inside" in steps:
-        print("[4/6] 正在重绘同画风 3:2 展开内页底图（浓色边饰与淡彩连续远景）...")
         p_inside = (
             f"Wide 3:2 flat greeting card inside spread strictly matching the artistic style ({art_medium}) of the attached card cover. "
             f"Frame the outer edges with motifs of {motifs}. "
             f"Paint a continuous low-contrast scene across the centre with distant shrubs, delicate sprigs and a curving path on {paper_tex}; show pale scenery in the spaces to either side of the figures. "
-            f"No people, no cake, no Christmas tree, no text, straight-on flat view."
+            f"No people, no cake, no Christmas tree, no text, straight-on flat view. {AESTHETIC_GUARD_EN}"
         )
-        run_redraw_asset(provider, p_inside, [cover_for_context], "1280*854", "3:2", str(out_dir / "inside_raw.png"))
+        batch2.append(("横版内页", lambda: (
+            print("[4/6] 正在重绘同画风 3:2 展开内页底图..."),
+            run_redraw_asset(provider, p_inside, [cover_for_context], "1280*854", "3:2", str(out_dir / "inside_raw.png")),
+        )))
 
     if "arch" in steps:
-        print(f"[5/6] 正在重绘同画风后景花环拱门立牌《{greeting_upper}》（pure #FFFFFF 白底）...")
         ornament_en = "two festive vintage Christmas baubles" if is_christmas else "two festive balloons"
         p_arch = (
             f"Semicircular botanical pop-up {card_theme_en} archway standee in the exact {art_medium} style. "
             f"Composed of {motifs}, arched festive lettering reading '{greeting_upper}' along the top curve, and {ornament_en} at the top-right shoulder. "
             f"Finish both feet with flat lower edges on one level horizontal baseline. Their outer edges define the full width of the arch. "
-            f"Pure flat solid white background (#FFFFFF) including open space below the arch, zero shadows, zero corner specks."
+            f"Pure flat solid white background (#FFFFFF) including open space below the arch, zero shadows, zero corner specks. {AESTHETIC_GUARD_EN}"
         )
-        run_redraw_asset(provider, p_arch, [cover_for_context], "1280*960", "4:3", str(out_dir / "arch_raw.png"))
+        batch2.append(("花环拱门", lambda: (
+            print(f"[5/6] 正在重绘同画风后景花环拱门立牌《{greeting_upper}》..."),
+            run_redraw_asset(provider, p_arch, [cover_for_context], "1280*960", "4:3", str(out_dir / "arch_raw.png")),
+        )))
 
     if steps.intersection({"prop", "cake", "tree"}):
         if is_christmas:
-            print("[6/6] 正在重绘同画风左前立体手绘圣诞树立牌（pure #FFFFFF 白底，供叠加闪亮星星灯）...")
             p_tree = (
                 f"Hand-painted {art_medium} pop-up paper standee of a charming lush miniature Christmas tree in a rustic wooden planter pot "
                 f"harmonious with the card palette. Decorate the pine branches with vintage ornaments, berries, tiny ribbons, and a delicate hand-painted gold star topper. "
-                f"Show a flat level base at the bottom of the pot. Pure flat solid white background (#FFFFFF), clean narrow margins, zero drop shadows, zero text, zero corner specks."
+                f"Show a flat level base at the bottom of the pot. Pure flat solid white background (#FFFFFF), clean narrow margins, zero drop shadows, zero text, zero corner specks. "
+                f"{AESTHETIC_GUARD_EN}"
             )
-            run_redraw_asset(provider, p_tree, [cover_for_context], "960*1280", "3:4", str(out_dir / "tree_raw.png"))
+            batch2.append(("立体圣诞树", lambda: (
+                print("[6/6] 正在重绘同画风左前立体手绘圣诞树立牌..."),
+                run_redraw_asset(provider, p_tree, [cover_for_context], "960*1280", "3:4", str(out_dir / "tree_raw.png")),
+            )))
         else:
-            print("[6/6] 正在重绘同画风左前木桌双层蛋糕（pure #FFFFFF 白底，蜡烛未点燃）...")
             p_cake = (
                 f"Hand-painted {art_medium} pop-up paper standee of a rustic wooden garden table and chair holding a two-tier frosted birthday cake "
                 f"harmonious with the card palette. Place ONE centered upright striped candle on the very top ending in a short unlit dark wick. "
                 f"Keep the arrangement compact, with the chair tucked beside the table. Show every foot, with the lowest feet on a common baseline. "
-                f"CRITICAL: NO fire, NO flame, NO glow on the candle. Pure flat solid white background (#FFFFFF), clean narrow margins, zero shadows, zero text, zero corner specks."
+                f"CRITICAL: NO fire, NO flame, NO glow on the candle. Pure flat solid white background (#FFFFFF), clean narrow margins, zero shadows, zero text, zero corner specks. "
+                f"{AESTHETIC_GUARD_EN}"
             )
-            run_redraw_asset(provider, p_cake, [cover_for_context], "960*1280", "3:4", str(out_dir / "cake_raw.png"))
+            batch2.append(("蛋糕桌椅", lambda: (
+                print("[6/6] 正在重绘同画风左前木桌双层蛋糕..."),
+                run_redraw_asset(provider, p_cake, [cover_for_context], "960*1280", "3:4", str(out_dir / "cake_raw.png")),
+            )))
+
+    run_parallel_batch("第 2 批（内页+拱门+道具）", batch2)
 
     print(f"[OK] 全套 AI 重绘素材已完成，输出目录: {out_dir}")
 

@@ -13,6 +13,7 @@
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -37,12 +38,19 @@ from process_diecut import (  # noqa: E402
     fit_cover_surface,
     image_to_data_uri,
     split_inside_spread,
+    validate_standee_visibility,
 )
 
 
 TEMPLATE_PATH = SKILL_ROOT / "resources" / "card_shell_template.html"
-LINEN_BIRTHDAY_PATH = SKILL_ROOT / "resources" / "embroidery_linen.png"
-LINEN_BLANK_PATH = SKILL_ROOT / "resources" / "embroidery_linen_blank.png"
+LINEN_BIRTHDAY_CANDIDATES = (
+    SKILL_ROOT / "resources" / "embroidery_linen.webp",
+    SKILL_ROOT / "resources" / "embroidery_linen.png",
+)
+LINEN_BLANK_CANDIDATES = (
+    SKILL_ROOT / "resources" / "embroidery_linen_blank.webp",
+    SKILL_ROOT / "resources" / "embroidery_linen_blank.png",
+)
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 
 
@@ -92,7 +100,9 @@ def normalize_blessing(raw: Dict[str, Any], occasion: str = "birthday") -> Dict[
     )
 
     lines_val = raw.get("lines")
-    if isinstance(lines_val, str):
+    if lines_val is None:
+        lines = default_lines
+    elif isinstance(lines_val, str):
         lines = smart_split_sentences(lines_val) or default_lines
     elif isinstance(lines_val, list):
         collected: List[str] = []
@@ -104,13 +114,22 @@ def normalize_blessing(raw: Dict[str, Any], occasion: str = "birthday") -> Dict[
                 collected.extend(smart_split_sentences(s))
             else:
                 collected.append(s)
-        lines = collected[:8] or default_lines
+        lines = collected or default_lines
     else:
-        lines = default_lines
+        raise ValueError("blessing.lines 字段格式错误：必须是字符串或字符串数组")
 
-    default_closing = "圣诞快乐，平安喜乐！" if is_christmas else "生日快乐！"
+    total_chars = sum(len(x) for x in lines)
+    if len(lines) > 8 or total_chars > 110:
+        print(
+            f"[提示] 当前祝福语正文共 {len(lines)} 行 / {total_chars} 字，已启用紧凑刺绣排版并保留前 8 行；"
+            f"为获得最佳棉麻布面留白效果，建议精简在 3~7 行、100 字以内。",
+            file=sys.stderr,
+        )
+        lines = lines[:8]
+
+    default_closing = "圣诞快乐，冬日安暖！" if is_christmas else "生日快乐！"
     closing = str(raw.get("closing") or default_closing).strip()
-    signature = str(raw.get("signature") or "你的挚友").strip()
+    signature = str(raw.get("signature") or "你的好友").strip()
     sub_signature = str(raw.get("subSignature") or "").strip()
 
     return {
@@ -120,6 +139,18 @@ def normalize_blessing(raw: Dict[str, Any], occasion: str = "birthday") -> Dict[
         "signature": signature,
         "subSignature": sub_signature,
     }
+
+
+def safe_embed_json(data: Dict[str, Any]) -> str:
+    """将配置字典序列化并安全转义 <、>、& 与 Unicode 行分隔符，杜绝内联 <script> 被意外截断或注入。"""
+    raw = json.dumps(data, ensure_ascii=False)
+    return (
+        raw.replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
 
 
 def main() -> None:
@@ -179,9 +210,17 @@ def main() -> None:
     inside_right_path = args.inside_right or find_first_existing(work_dir, "inside_right")
     arch_path = args.arch or find_first_existing(work_dir, "arch_raw", "christmas_arch_raw")
     if is_christmas:
-        left_prop_path = args.tree or args.cake or find_first_existing(work_dir, "tree_raw", "christmas_tree_raw", "cake_raw")
+        if args.cake:
+            parser.error("圣诞模式禁止使用生日蛋糕素材 --cake，请提供立体圣诞树 --tree 或工作目录下的 tree_raw.png")
+        left_prop_path = args.tree or find_first_existing(work_dir, "tree_raw", "christmas_tree_raw")
+        if not left_prop_path or not os.path.isfile(left_prop_path):
+            parser.error("圣诞模式必须提供立体圣诞树素材 --tree（或在 --work-dir 中放置 tree_raw.png）")
     else:
+        if args.tree:
+            parser.error("生日模式请使用双层蛋糕素材 --cake 或 cake_raw.png；若要制作圣诞贺卡请加上 --occasion christmas")
         left_prop_path = args.cake or find_first_existing(work_dir, "cake_raw")
+        if not left_prop_path or not os.path.isfile(left_prop_path):
+            parser.error("生日模式必须提供蛋糕桌椅素材 --cake（或在 --work-dir 中放置 cake_raw.png）")
     style_ref_path = args.style_ref or find_first_existing(work_dir, "style_ref")
 
     if not cover_path or not os.path.isfile(cover_path):
@@ -222,6 +261,12 @@ def main() -> None:
     print("[2/5] 正在为中央人物立牌执行去杂点抠图并生成 300g 米白刀模卡纸边...")
     char_out = str(processed_dir / "character_standee.png") if processed_dir else None
     char_standee = create_die_cut_standee(char_path, out_path=char_out, border_px=13, target_max_size=820, allow_inner_hole=False)
+    char_ok, char_ratio = validate_standee_visibility(char_standee)
+    if not char_ok:
+        raise SystemExit(
+            f"错误：检测到中央人物图片 '{char_path}' 有效主体过少或为纯白/全透明空白图（可见占比 {char_ratio*100:.2f}%），"
+            f"已拦截打包，请检查或重新生成带纯白背景的人物插画。"
+        )
     char_uri = image_to_data_uri(char_standee, fmt="WEBP", quality=88, max_dim=760)
 
     print("[3/5] 正在切分展开内页并内联对应节日毛边棉麻刺绣底布...")
@@ -244,10 +289,17 @@ def main() -> None:
         inside_right_uri = image_to_data_uri(r_img, fmt="WEBP", quality=86)
 
     linen_uri = ""
-    chosen_linen = LINEN_BLANK_PATH if (is_christmas and LINEN_BLANK_PATH.is_file()) else LINEN_BIRTHDAY_PATH
-    if chosen_linen.is_file():
+    linen_candidates = LINEN_BLANK_CANDIDATES if is_christmas else LINEN_BIRTHDAY_CANDIDATES
+    chosen_linen = next((p for p in linen_candidates if p.is_file()), None)
+    if chosen_linen is not None:
         linen_img = Image.open(chosen_linen)
         linen_uri = image_to_data_uri(linen_img, fmt="WEBP", quality=86, max_dim=680)
+    else:
+        print(
+            f"[提示] 未找到{'圣诞空白' if is_christmas else '生日'}棉麻刺绣底布 '{linen_candidates[0].name}'，"
+            f"已使用主题隔离的纯矢量 CSS 棉麻刺绣底板（绝不跨主题混用底布）。",
+            file=sys.stderr,
+        )
 
     prop_label = "立体圣诞树并定位闪烁星灯" if is_christmas else "左前木桌蛋糕并定位蜡烛芯"
     print(f"[4/5] 正在裁切后景拱门与{prop_label}...")
@@ -257,6 +309,11 @@ def main() -> None:
         arch_standee = create_die_cut_standee(arch_path, border_px=10, target_max_size=920, allow_inner_hole=True)
         if vertical:
             arch_standee = align_arch_feet(arch_standee)
+        arch_ok, arch_ratio = validate_standee_visibility(arch_standee)
+        if not arch_ok:
+            raise SystemExit(
+                f"错误：检测到花环拱门图片 '{arch_path}' 为空白、全透明或主体不可见（可见占比 {arch_ratio*100:.2f}%），已拦截打包。"
+            )
         if arch_out:
             arch_standee.save(arch_out)
         arch_uri = image_to_data_uri(arch_standee, fmt="WEBP", quality=86, max_dim=880)
@@ -268,8 +325,19 @@ def main() -> None:
         prop_filename = "tree_standee.png" if is_christmas else "cake_standee.png"
         prop_out = str(processed_dir / prop_filename) if processed_dir else None
         prop_standee = create_die_cut_standee(left_prop_path, out_path=prop_out, border_px=11, target_max_size=760, allow_inner_hole=False)
+        prop_ok, prop_ratio = validate_standee_visibility(prop_standee)
+        if not prop_ok:
+            prop_cn = "立体圣诞树" if is_christmas else "蛋糕桌椅"
+            raise SystemExit(
+                f"错误：检测到{prop_cn}图片 '{left_prop_path}' 为空白、全透明或主体不可见（可见占比 {prop_ratio*100:.2f}%），已拦截打包。"
+            )
         if is_christmas:
             tree_lights = detect_tree_light_anchors(prop_standee)
+            if len(tree_lights.get("lights", [])) < 3:
+                print(
+                    "[提示] 当前圣诞树树冠可挂星灯的实心枝干区域较窄，已自动按实心边界收敛星灯数量以确保 0 悬空。",
+                    file=sys.stderr,
+                )
         else:
             cake_wick_pos = detect_candle_wick_position(prop_standee)
         cake_uri = image_to_data_uri(prop_standee, fmt="WEBP", quality=88, max_dim=680)
@@ -278,7 +346,10 @@ def main() -> None:
     blessing_path = args.blessing or (str(work_dir / "blessing.json") if work_dir and (work_dir / "blessing.json").is_file() else None)
     if blessing_path and os.path.isfile(blessing_path):
         with open(blessing_path, "r", encoding="utf-8") as f:
-            raw_blessing = json.load(f)
+            loaded_blessing = json.load(f)
+        if not isinstance(loaded_blessing, dict):
+            raise SystemExit("错误：blessing.json 顶层必须是 JSON 对象（{...}），不能是数组或纯文本。")
+        raw_blessing = loaded_blessing
 
     if args.recipient is not None:
         raw_blessing["recipient"] = args.recipient
@@ -291,9 +362,23 @@ def main() -> None:
     if args.sub_signature is not None:
         raw_blessing["subSignature"] = args.sub_signature
 
-    blessing_cfg = normalize_blessing(raw_blessing, occasion=args.occasion)
+    try:
+        blessing_cfg = normalize_blessing(raw_blessing, occasion=args.occasion)
+    except ValueError as err:
+        raise SystemExit(f"错误：祝福语数据格式无效：{err}")
+
+    id_seed = "|".join([
+        args.occasion,
+        args.fold,
+        Path(args.output).name,
+        cover_uri[:256],
+        char_uri[:256],
+        json.dumps(blessing_cfg, ensure_ascii=False, sort_keys=True),
+    ])
+    card_id = hashlib.sha256(id_seed.encode("utf-8")).hexdigest()[:12]
 
     card_config: Dict[str, Any] = {
+        "cardId": card_id,
         "occasion": args.occasion,
         "fold": args.fold,
         "coverImageUrl": cover_uri,
@@ -315,7 +400,7 @@ def main() -> None:
         raise FileNotFoundError(f"找不到模板文件: {TEMPLATE_PATH}")
 
     template_html = TEMPLATE_PATH.read_text(encoding="utf-8")
-    config_json = json.dumps(card_config, ensure_ascii=False).replace("</", "<\\/")
+    config_json = safe_embed_json(card_config)
     pattern = re.compile(r"/\*__CARD_CONFIG_START__\*/[\s\S]*?/\*__CARD_CONFIG_END__\*/")
     if not pattern.search(template_html):
         raise RuntimeError("模板中未找到 /*__CARD_CONFIG_START__*/ 注入标记")

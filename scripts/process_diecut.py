@@ -14,6 +14,7 @@ import colorsys
 import io
 import json
 import os
+import sys
 from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -129,17 +130,17 @@ def flood_fill_white_background(
 
 def remove_small_components(
     fg_mask: Image.Image,
-    min_ratio: float = 0.006,
-    min_pixels: int = 160,
+    min_ratio: float = 0.0025,
+    min_pixels: int = 24,
 ) -> Image.Image:
     """
-    自动清除前景掩码中远离主体的孤立碎杂点/水印残点（连通域面积过滤）。
-    根治不同 AI Agent 生成白底图时画布角落偶发微小杂点导致立牌包围盒被撑大、上台穿模的问题。
+    结合连通域面积与到主体核心包围盒的距离，清理远离主体的孤立碎杂点/角落圆点，
+    同时保护紧贴主体的精细结构（如蛋糕顶部细蜡烛芯、树顶小星等）不被误删。
     """
     w, h = fg_mask.size
     raw = fg_mask.tobytes()
     visited = bytearray(w * h)
-    components: List[List[int]] = []
+    components: List[Tuple[List[int], Tuple[int, int, int, int]]] = []
 
     for idx in range(w * h):
         if raw[idx] == 0 or visited[idx]:
@@ -147,11 +148,23 @@ def remove_small_components(
         comp: List[int] = []
         q = deque([idx])
         visited[idx] = 1
+        min_x = w
+        min_y = h
+        max_x = -1
+        max_y = -1
         while q:
             cur = q.popleft()
             comp.append(cur)
             cx = cur % w
             cy = cur // w
+            if cx < min_x:
+                min_x = cx
+            if cx > max_x:
+                max_x = cx
+            if cy < min_y:
+                min_y = cy
+            if cy > max_y:
+                max_y = cy
             if cx > 0:
                 n = cur - 1
                 if raw[n] and not visited[n]:
@@ -172,19 +185,74 @@ def remove_small_components(
                 if raw[n] and not visited[n]:
                     visited[n] = 1
                     q.append(n)
-        components.append(comp)
+        components.append((comp, (min_x, min_y, max_x, max_y)))
 
     if not components:
         return fg_mask
 
-    max_area = max(len(c) for c in components)
-    threshold = max(min_pixels, int(max_area * min_ratio))
+    max_area = max(len(c) for c, _ in components)
+    core_thresh = max(min_pixels, int(max_area * 0.02))
+    mx0, my0, mx1, my1 = w, h, -1, -1
+    for comp, (x0, y0, x1, y1) in components:
+        if len(comp) >= core_thresh or len(comp) == max_area:
+            mx0 = min(mx0, x0)
+            my0 = min(my0, y0)
+            mx1 = max(mx1, x1)
+            my1 = max(my1, y1)
+
+    near_dist = max(14, int(min(w, h) * 0.04))
+    far_dist = max(20, int(min(w, h) * 0.06))
+    far_area_thresh = max(320, int(max_area * 0.045))
+    mid_thresh = max(min_pixels, int(max_area * min_ratio))
+
     cleaned = bytearray(w * h)
-    for comp in components:
-        if len(comp) >= threshold:
+    for comp, (x0, y0, x1, y1) in components:
+        area = len(comp)
+        dx = max(mx0 - x1, x0 - mx1, 0)
+        dy = max(my0 - y1, y0 - my1, 0)
+        dist = max(dx, dy)
+
+        if area >= core_thresh or area == max_area:
+            keep = True
+        elif dist <= near_dist:
+            # 紧贴主体的细小关键细节（如独立细蜡烛芯、小花瓣）保留
+            keep = area >= 5
+        elif dist > far_dist:
+            # 远离主体的孤立小噪点/角落圆点坚决清除
+            keep = area >= far_area_thresh
+        else:
+            keep = area >= mid_thresh
+
+        if keep:
             for p in comp:
                 cleaned[p] = 255
     return Image.frombytes("L", (w, h), bytes(cleaned))
+
+
+def validate_standee_visibility(
+    standee_rgba: Image.Image,
+    min_pixels: int = 400,
+    min_ratio: float = 0.012,
+) -> Tuple[bool, float]:
+    """
+    检查裁切后的立牌是否包含真实可见的主体内容（拦截纯白空图、全透明图或仅剩极少噪点的无效素材）。
+    """
+    w, h = standee_rgba.size
+    if w <= 0 or h <= 0:
+        return False, 0.0
+    total = w * h
+    px = standee_rgba.convert("RGBA").getdata()
+    opaque_count = 0
+    drawn_count = 0
+    for r, g, b, a in px:
+        if a > 200:
+            opaque_count += 1
+            if min(r, g, b) < 238 or (max(r, g, b) - min(r, g, b)) > 12:
+                drawn_count += 1
+    ratio = opaque_count / float(total)
+    min_drawn = max(60, min(min_pixels // 2, int(total * 0.004)))
+    is_valid = opaque_count >= min(min_pixels, max(80, total // 12)) and drawn_count >= min_drawn and ratio >= min_ratio
+    return is_valid, round(ratio, 4)
 
 
 def create_die_cut_standee(
@@ -196,7 +264,7 @@ def create_die_cut_standee(
 ) -> Image.Image:
     """
     把白底插画裁切成带圆润 300g 米白厚卡纸刀模留白边（#FAF6EC）的透明 RGBA 立牌。
-    若输入本身已是四角透明的成品 PNG，则保留原有透明通道并紧凑裁剪边缘。
+    若输入本身已是四角透明的成品 PNG，则先清理远离主体的角落碎杂点再紧凑裁剪边缘。
     """
     raw = Image.open(src_path)
     if max(raw.size) > target_max_size:
@@ -204,7 +272,8 @@ def create_die_cut_standee(
 
     # 判断原图是否本身已经带透明背景（例如手工预设的成品 PNG）
     if raw.mode == "RGBA":
-        alpha_extrema = raw.getchannel("A").getextrema()
+        alpha_ch = raw.getchannel("A")
+        alpha_extrema = alpha_ch.getextrema()
         w0, h0 = raw.size
         corners_alpha = [
             raw.getpixel((0, 0))[3],
@@ -213,8 +282,13 @@ def create_die_cut_standee(
             raw.getpixel((w0 - 1, h0 - 1))[3],
         ]
         if alpha_extrema[0] < 20 and max(corners_alpha) < 30:
-            bbox = raw.getbbox()
-            result = raw.crop(bbox) if bbox else raw
+            alpha_bin = alpha_ch.point(lambda p: 255 if p > 24 else 0)
+            clean_bin = remove_small_components(alpha_bin)
+            clean_alpha = ImageChops.darker(alpha_ch, clean_bin)
+            cleaned_rgba = raw.copy()
+            cleaned_rgba.putalpha(clean_alpha)
+            bbox = cleaned_rgba.getbbox()
+            result = cleaned_rgba.crop(bbox) if bbox else cleaned_rgba
             if out_path:
                 os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
                 result.save(out_path, "PNG", optimize=True)
@@ -222,8 +296,8 @@ def create_die_cut_standee(
 
     img = raw.convert("RGB")
     fg_mask = flood_fill_white_background(img, allow_inner_hole=allow_inner_hole)
-    # 轻微收缩 1px 消除扫描抗锯齿白丝，并自动清除画布角落零散孤立碎杂点（根治立牌包围盒撑大穿模）
-    fg_clean = remove_small_components(fg_mask.filter(ImageFilter.MinFilter(3)))
+    # 先保留完整细小特征并按距离清理角落碎杂点，绝不先 MinFilter 吞掉 2~3px 细蜡烛芯/枝梢
+    fg_clean = remove_small_components(fg_mask)
 
     # 在四周预留安全内边距避免白边被画布四边切平
     pad_work = border_px * 2 + 12
@@ -252,7 +326,8 @@ def create_die_cut_standee(
     edge_tint = Image.new("RGB", (canvas_w, canvas_h), (216, 206, 188))
     paper_base = Image.composite(edge_tint, paper_base, edge_ring.point(lambda p: int(p * 0.52)))
 
-    fg_feather = mask_padded.filter(ImageFilter.GaussianBlur(radius=0.85))
+    # 使用极微柔边（0.35px）保持 2~3px 精细深色线条完整锐利、不被米白卡纸冲淡
+    fg_feather = mask_padded.filter(ImageFilter.GaussianBlur(radius=0.35))
     combined_rgb = Image.composite(img_padded, paper_base, fg_feather)
 
     result = combined_rgb.convert("RGBA")
@@ -310,84 +385,158 @@ def detect_candle_wick_position(standee_rgba: Image.Image) -> Dict[str, float]:
     return {"leftPct": left_pct, "topPct": top_pct}
 
 
+def _erode_binary_mask(mask: Image.Image, radius_px: int) -> Image.Image:
+    """对二值 L 掩码向内平滑腐蚀约 radius_px 像素，去除外围米白卡纸白边并留出树冠内芯安全区。"""
+    eroded = mask
+    steps = max(1, radius_px // 2)
+    for _ in range(steps):
+        eroded = eroded.filter(ImageFilter.MinFilter(5))
+    return eroded
+
+
 def detect_tree_light_anchors(standee_rgba: Image.Image) -> Dict[str, Any]:
     """
-    自动扫描裁切后的立体圣诞树轮廓，定位树顶主星位置，并在树冠真实绿叶内部错落分布 13 颗暖光星星灯坐标。
-    确保无论哪家 AI 生成什么高矮胖瘦的圣诞树，所有闪烁星星灯都稳稳挂在树枝上绝不飘到树外。
+    自动扫描裁切后的立体圣诞树实体轮廓（完全基于 Alpha 实体内缩掩码，兼容深绿、浅绿、偏黄及白雪圣诞树与分叉树）：
+    1. 精确将树顶主星钉在树尖真实实体中心（绝不偏离树尖）；
+    2. 按高度层扫描真实连续树冠实心区间并跳过分叉空隙，逐点校验 5x5 像素均处于树冠实心内芯，
+       树冠较窄或分叉严重时自动减少灯数，确保 100% 不悬空飘到树外。
     """
     w, h = standee_rgba.size
-    px = standee_rgba.load()
+    alpha_ch = standee_rgba.convert("RGBA").getchannel("A")
+    solid_mask = alpha_ch.point(lambda p: 255 if p > 215 else 0)
 
-    def scan_row_span(y_idx: int) -> Optional[Tuple[int, int]]:
-        xs = []
+    # 先轻度腐蚀去除外围米白刀模边（保留树尖实体），定位树顶星
+    top_erode_px = max(4, min(10, int(min(w, h) * 0.02)))
+    top_mask = _erode_binary_mask(solid_mask, top_erode_px)
+    if not top_mask.getbbox():
+        top_mask = solid_mask
+    top_px = top_mask.load()
+
+    def scan_mask_segments(px_map: Any, y_idx: int) -> List[Tuple[int, int]]:
+        segments: List[Tuple[int, int]] = []
+        in_seg = False
+        seg_start = 0
         for x in range(w):
-            r, g, b, a = px[x, y_idx]
-            if a > 210 and (min(r, g, b) < 235 or (max(r, g, b) - min(r, g, b)) > 16):
-                xs.append(x)
-        if len(xs) < 6:
-            return None
-        return xs[0], xs[-1]
+            if px_map[x, y_idx] > 128:
+                if not in_seg:
+                    in_seg = True
+                    seg_start = x
+            elif in_seg:
+                in_seg = False
+                segments.append((seg_start, x - 1))
+        if in_seg:
+            segments.append((seg_start, w - 1))
+        return segments
 
-    # 1. 寻找树顶主星锚点
+    # 1. 寻找真实树尖位置（取最先出现实心树尖的连续数行做水平均值，竖向直接锚定树尖顶部）
     top_star = {"leftPct": 50.0, "topPct": 8.5}
-    for y in range(int(h * 0.02), int(h * 0.24)):
-        span = scan_row_span(y)
-        if span:
-            cx = (span[0] + span[1]) / 2.0
-            top_star = {
-                "leftPct": round(max(34.0, min(66.0, (cx / w) * 100.0)), 2),
-                "topPct": round(max(4.5, min(20.0, ((y + h * 0.028) / h) * 100.0)), 2),
-            }
-            break
+    peak_rows: List[Tuple[int, float]] = []
+    for y in range(int(h * 0.01), int(h * 0.28)):
+        segs = scan_mask_segments(top_px, y)
+        if not segs:
+            continue
+        longest = max(segs, key=lambda s: s[1] - s[0])
+        if longest[1] - longest[0] >= 3:
+            peak_rows.append((y, (longest[0] + longest[1]) / 2.0))
+            if len(peak_rows) >= 5:
+                break
+    if peak_rows:
+        peak_y = peak_rows[0][0]
+        peak_cx = sum(item[1] for item in peak_rows) / len(peak_rows)
+        # 确保树尖本身处于实心区域内（若第 0 行特别窄则微向下 1.2% 确保金星稳落树顶）
+        anchor_y = min(int(h * 0.26), peak_y + max(2, int(h * 0.012)))
+        top_star = {
+            "leftPct": round(max(20.0, min(80.0, (peak_cx / w) * 100.0)), 2),
+            "topPct": round(max(2.5, min(28.0, (anchor_y / h) * 100.0)), 2),
+        }
 
-    # 2. 按 5 个高度层在树冠安全内缩区间布置错落星灯
-    row_specs = [
-        (0.24, 2, (0.34, 0.66)),
-        (0.36, 2, (0.24, 0.74)),
-        (0.49, 3, (0.20, 0.52, 0.80)),
-        (0.61, 3, (0.18, 0.48, 0.82)),
-        (0.73, 3, (0.22, 0.54, 0.79)),
-    ]
+    # 2. 向内腐蚀得到完全避开卡纸边与最外缘锯齿的树冠安全实心内芯掩码
+    crown_erode_px = max(12, min(22, int(min(w, h) * 0.036)))
+    core_mask = _erode_binary_mask(solid_mask, crown_erode_px)
+    if not core_mask.getbbox():
+        core_mask = _erode_binary_mask(solid_mask, max(6, top_erode_px))
+    core_px = core_mask.load()
+
+    def is_point_inside_crown(cx_f: float, cy_f: float) -> bool:
+        ix = int(round(cx_f))
+        iy = int(round(cy_f))
+        if ix < 2 or ix >= w - 2 or iy < 2 or iy >= h - 2:
+            return False
+        hits = 0
+        for dy in (-2, -1, 0, 1, 2):
+            for dx in (-2, -1, 0, 1, 2):
+                if core_px[ix + dx, iy + dy] > 128:
+                    hits += 1
+        return hits >= 22
+
+    # 在树顶下方至树冠底缘之间均匀取 5 个高度层（避开底部木盆/树干根部）
+    crown_top_y = (top_star["topPct"] / 100.0) * h
+    crown_bot_y = h * 0.74
+    layer_ratios = [0.18, 0.36, 0.54, 0.72, 0.90]
+    layer_target_counts = [2, 2, 3, 3, 3]
+
     lights: List[Dict[str, Any]] = []
+    min_dist_sq = (max(12.0, min(w, h) * 0.075)) ** 2
     phase_idx = 0
-    for y_ratio, _cnt, frac_positions in row_specs:
-        y_idx = min(h - 1, max(0, int(h * y_ratio)))
-        span = scan_row_span(y_idx)
-        if not span:
-            continue
-        x0, x1 = span
-        row_w = x1 - x0
-        if row_w < 16:
-            continue
-        for pos_idx, frac in enumerate(frac_positions):
-            lx = x0 + row_w * frac
-            # 上下微幅自然错落，像手工绕上的暖光灯串
-            ly = y_idx + ((-1) ** (phase_idx + pos_idx)) * h * 0.016
-            lights.append({
-                "leftPct": round(max(12.0, min(88.0, (lx / w) * 100.0)), 2),
-                "topPct": round(max(14.0, min(82.0, (ly / h) * 100.0)), 2),
-                "size": 10 if (phase_idx % 3 == 0) else 8,
-                "delay": round((phase_idx * 0.37) % 2.2, 2),
-                "duration": round(1.55 + (phase_idx % 4) * 0.32, 2),
-                "warm": (phase_idx % 2 == 0),
-            })
-            phase_idx += 1
 
-    if len(lights) < 6:
-        lights = [
-            {"leftPct": 46.0, "topPct": 25.0, "size": 9, "delay": 0.1, "duration": 1.7, "warm": True},
-            {"leftPct": 55.0, "topPct": 31.0, "size": 8, "delay": 0.5, "duration": 2.0, "warm": False},
-            {"leftPct": 41.0, "topPct": 40.0, "size": 10, "delay": 0.9, "duration": 1.6, "warm": True},
-            {"leftPct": 58.0, "topPct": 44.0, "size": 8, "delay": 1.2, "duration": 2.2, "warm": False},
-            {"leftPct": 36.0, "topPct": 55.0, "size": 9, "delay": 0.3, "duration": 1.9, "warm": True},
-            {"leftPct": 50.0, "topPct": 53.0, "size": 10, "delay": 0.8, "duration": 1.7, "warm": False},
-            {"leftPct": 64.0, "topPct": 57.0, "size": 8, "delay": 1.4, "duration": 2.1, "warm": True},
-            {"leftPct": 33.0, "topPct": 69.0, "size": 9, "delay": 0.6, "duration": 1.8, "warm": False},
-            {"leftPct": 49.0, "topPct": 67.0, "size": 10, "delay": 1.1, "duration": 2.0, "warm": True},
-            {"leftPct": 66.0, "topPct": 70.0, "size": 8, "delay": 0.2, "duration": 1.6, "warm": False},
-        ]
+    for l_ratio, target_cnt in zip(layer_ratios, layer_target_counts):
+        y_base = int(round(crown_top_y + (crown_bot_y - crown_top_y) * l_ratio))
+        if y_base <= 4 or y_base >= h - 4:
+            continue
+        segs = [s for s in scan_mask_segments(core_px, y_base) if (s[1] - s[0]) >= max(8, int(w * 0.035))]
+        if not segs:
+            continue
 
-    return {"topStar": top_star, "lights": lights}
+        total_seg_w = sum((s[1] - s[0]) for s in segs)
+        # 按连续实心枝干宽度比例在每段中安全取点，绝不跨越分叉中间空隙
+        for seg_idx, (sx0, sx1) in enumerate(segs):
+            seg_w = sx1 - sx0
+            seg_quota = max(1, round(target_cnt * (seg_w / max(1, total_seg_w))))
+            if seg_idx == 0 and len(segs) >= 2:
+                seg_quota = max(1, target_cnt // len(segs))
+            pad = min(seg_w * 0.22, max(4.0, w * 0.02))
+            usable_w = max(1.0, seg_w - 2 * pad)
+            for k in range(seg_quota):
+                frac = 0.5 if seg_quota == 1 else (0.15 + 0.70 * (k / (seg_quota - 1)))
+                cand_x = sx0 + pad + usable_w * frac
+                jitter_y = ((-1) ** (phase_idx + k)) * min(6.0, h * 0.012)
+                cand_y = min(crown_bot_y, max(crown_top_y + 8, y_base + jitter_y))
+
+                # 优先取微调后的实心点；不行则退回严格处于该段中线的基准 y_base 点
+                chosen_pt: Optional[Tuple[float, float]] = None
+                for test_y in (cand_y, float(y_base), float(y_base - 4), float(y_base + 4)):
+                    if is_point_inside_crown(cand_x, test_y):
+                        chosen_pt = (cand_x, test_y)
+                        break
+                if chosen_pt is None:
+                    mid_x = (sx0 + sx1) / 2.0
+                    if is_point_inside_crown(mid_x, float(y_base)):
+                        chosen_pt = (mid_x, float(y_base))
+                if chosen_pt is None:
+                    continue
+
+                lx, ly = chosen_pt
+                if any((lx - pt["_px"]) ** 2 + (ly - pt["_py"]) ** 2 < min_dist_sq for pt in lights):
+                    continue
+
+                lights.append({
+                    "_px": lx,
+                    "_py": ly,
+                    "leftPct": round(max(4.0, min(96.0, (lx / w) * 100.0)), 2),
+                    "topPct": round(max(5.0, min(88.0, (ly / h) * 100.0)), 2),
+                    "size": 10 if (phase_idx % 3 == 0) else 8,
+                    "delay": round((phase_idx * 0.37) % 2.2, 2),
+                    "duration": round(1.55 + (phase_idx % 4) * 0.32, 2),
+                    "warm": (phase_idx % 2 == 0),
+                })
+                phase_idx += 1
+
+    # 清理内部临时像素坐标字段，保证输出字典完全纯净
+    for pt in lights:
+        pt.pop("_px", None)
+        pt.pop("_py", None)
+
+    return {"topStar": top_star, "lights": lights[:13]}
 
 
 def hsl_to_hex(h_deg: float, s_pct: float, l_pct: float) -> str:
@@ -498,8 +647,20 @@ def align_arch_feet(img: Image.Image) -> Image.Image:
 
 
 def fit_cover_surface(cover_path: str, size: Tuple[int, int] = (750, 1000)) -> Image.Image:
-    """将重绘好的封面图等比居中裁切贴合为标准 3:4 竖版卡片比例。"""
+    """将重绘好的封面或内页图等比居中裁切贴合为标准尺寸，并在遇到极端长宽比时发出安全区提醒。"""
     img = Image.open(cover_path).convert("RGB")
+    sw, sh = img.size
+    dw, dh = size
+    if sw > 0 and sh > 0 and dw > 0 and dh > 0:
+        src_r = sw / float(sh)
+        dst_r = dw / float(dh)
+        ratio_diff = max(src_r / dst_r, dst_r / src_r)
+        if ratio_diff > 1.35:
+            print(
+                f"[提示] 图片 '{os.path.basename(cover_path)}' 原比例 ({sw}x{sh}) 与目标比例 ({dw}x{dh}) 差异较大（{ratio_diff:.2f}x），"
+                f"已自动居中裁切以防变形，边缘装饰或题字若被裁切请按目标比例重新生成。",
+                file=sys.stderr,
+            )
     return ImageOps.fit(img, size, Image.Resampling.LANCZOS)
 
 
@@ -509,9 +670,8 @@ def split_inside_spread(
     *,
     vertical: bool = False,
 ) -> Tuple[Image.Image, Image.Image]:
-    """将展开底图沿折线平分，按左至右或上至下返回两页。"""
-    img = Image.open(inside_path).convert("RGB")
-    fitted = ImageOps.fit(img, size, Image.Resampling.LANCZOS)
+    """将展开底图沿折线平分，按左至右或上至下返回两页，并检查极端比例裁切风险。"""
+    fitted = fit_cover_surface(inside_path, size=size)
     if vertical:
         half_h = size[1] // 2
         return fitted.crop((0, 0, size[0], half_h)), fitted.crop((0, half_h, size[0], size[1]))

@@ -374,14 +374,19 @@
     .petal.snow-flake { border-radius: 50%; box-shadow: 0 0 6px rgba(255,253,246,0.9); }
     @keyframes fall { 0% { transform: translate(0, -10px) rotate(0deg); opacity: 0; } 15% { opacity: 0.92; } 100% { transform: translate(var(--dx), 102vh) rotate(320deg); opacity: 0; } }
 
-    /* ==================== 手工棉麻毛边刺绣祝福信弹窗（双主题 0 穿帮） ==================== */
+    /* ==================== 手工棉麻毛边刺绣祝福信弹窗（支持手机原生上下滑动、双主题 0 穿帮） ==================== */
     .modal-mask {
       position: fixed; inset: 0; z-index: 60; background: rgba(16,14,12,0.84);
       backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      display: none; align-items: center; justify-content: center; padding: 16px;
+      display: none; flex-direction: column; align-items: center; justify-content: flex-start;
+      overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; overscroll-behavior: contain;
+      padding: max(18px, env(safe-area-inset-top)) 14px max(48px, env(safe-area-inset-bottom));
     }
     .modal-mask.open { display: flex; }
-    .letter-shell { display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: 96vw; max-height: 94vh; }
+    .letter-shell {
+      display: flex; flex-direction: column; align-items: center; gap: 12px;
+      width: min(920px, 100%); margin: auto 0; flex-shrink: 0;
+    }
     .letter-actions { display: flex; gap: 8px; justify-content: flex-end; width: 100%; }
     .dark-pill {
       display: inline-flex; align-items: center; gap: 5px; padding: 7px 14px; border-radius: 999px;
@@ -460,25 +465,61 @@
       .embroidered-overlay .l-sig-sub { font-size: 11px; }
     }
 
+    /* 长文本祝福语自动微缩档位，确保在刺绣框内完整清晰不裁切 */
+    .linen-photo-card.text-dense .l-lines,
+    .linen-css-card.text-dense .l-lines { font-size: clamp(12px, 1.38vw, 14.5px); line-height: 1.22; gap: 2px; }
+    .linen-photo-card.text-dense .l-recipient,
+    .linen-photo-card.text-dense .l-closing,
+    .linen-css-card.text-dense .l-recipient,
+    .linen-css-card.text-dense .l-closing { font-size: clamp(13.5px, 1.55vw, 16px); }
+
+    .linen-photo-card.text-compact .l-lines,
+    .linen-css-card.text-compact .l-lines { font-size: clamp(10.5px, 1.15vw, 12.8px); line-height: 1.16; gap: 1px; }
+    .linen-photo-card.text-compact .l-recipient,
+    .linen-photo-card.text-compact .l-closing,
+    .linen-css-card.text-compact .l-recipient,
+    .linen-css-card.text-compact .l-closing { font-size: clamp(12px, 1.3vw, 14px); }
+
     .editor-box {
-      width: min(340px, 88vw); padding: 20px; border-radius: 18px; background: rgba(250,247,240,0.97);
-      box-shadow: 0 20px 45px rgba(0,0,0,0.38); display: none; flex-direction: column; gap: 11px; user-select: text;
+      width: min(360px, 92vw); padding: 18px; border-radius: 18px;
+      background: rgba(250,247,240,0.98); box-shadow: 0 20px 45px rgba(0,0,0,0.38);
+      display: none; flex-direction: column; gap: 10px; user-select: text; touch-action: pan-y;
     }
     .editor-box.show { display: flex; }
+    .editor-fields {
+      display: flex; flex-direction: column; gap: 9px; touch-action: pan-y;
+    }
+    .ed-tip { font-size: 11px; color: var(--ink-secondary); line-height: 1.35; }
     .ed-label { font-size: 12px; font-weight: 500; color: var(--ink-secondary); display: flex; flex-direction: column; gap: 4px; }
     .ed-input, .ed-area {
-      width: 100%; padding: 8px 10px; border-radius: 9px; border: 1px solid rgba(120,104,84,0.28);
-      font-size: 13px; background: #fff; color: var(--ink-primary); outline: none;
+      width: 100%; padding: 9px 11px; border-radius: 9px; border: 1px solid rgba(120,104,84,0.28);
+      font-size: 16px; line-height: 1.4; background: #fff; color: var(--ink-primary); outline: none;
     }
-    .ed-btns { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; }
-    .btn-save { padding: 8px 16px; border-radius: 9px; border: none; background: var(--ink-primary); color: #faf6ec; font-size: 12.5px; cursor: pointer; }
-    .btn-reset { padding: 7px 12px; border-radius: 9px; border: 1px solid rgba(120,104,84,0.28); background: transparent; font-size: 12px; color: var(--ink-secondary); cursor: pointer; }
+    @media (min-width: 761px) {
+      .editor-box { max-height: min(80vh, 540px); overflow: hidden; }
+      .editor-fields { flex: 1; min-height: 0; overflow-y: auto; padding-right: 3px; }
+      .ed-input, .ed-area { font-size: 13.5px; }
+    }
+    .ed-btns {
+      flex-shrink: 0; display: flex; justify-content: space-between; gap: 8px;
+      padding-top: 10px; border-top: 1px solid rgba(120,104,84,0.14);
+    }
+    .btn-save { padding: 9px 18px; border-radius: 9px; border: none; background: var(--ink-primary); color: #faf6ec; font-size: 13px; cursor: pointer; }
+    .btn-reset { padding: 8px 13px; border-radius: 9px; border: 1px solid rgba(120,104,84,0.28); background: transparent; font-size: 12.5px; color: var(--ink-secondary); cursor: pointer; }
+
+    @media (max-width: 760px) {
+      .letter-cols { width: 100%; }
+      .letter-cols.mobile-editing .linen-photo-card,
+      .letter-cols.mobile-editing .linen-css-card { display: none !important; }
+      .editor-box { width: 100%; max-width: 400px; margin-bottom: 18px; }
+    }
   </style>
 </head>
 <body>
   <!-- ==================== 全局唯一配置注入点（由 build_card.py 自动注入） ==================== -->
   <script>
     window.CARD_CONFIG = /*__CARD_CONFIG_START__*/{
+      cardId: "default-card",
       occasion: "birthday",
       fold: "horizontal",
       coverImageUrl: "",
@@ -758,12 +799,15 @@
           </div>
 
           <div id="editorBox" class="editor-box">
-            <strong style="font-size:15px;">微调刺绣祝福语</strong>
-            <label class="ed-label">抬头称呼<input id="inRecipient" class="ed-input" /></label>
-            <label class="ed-label">祝福正文（每行一句）<textarea id="inLines" rows="5" class="ed-area"></textarea></label>
-            <label class="ed-label">结尾祝词<input id="inClosing" class="ed-input" /></label>
-            <label class="ed-label">署名<input id="inSig" class="ed-input" /></label>
-            <label class="ed-label">副署名 / 日期<input id="inSubSig" class="ed-input" /></label>
+            <strong style="font-size:15px;flex-shrink:0;">微调刺绣祝福语</strong>
+            <div class="editor-fields">
+              <div class="ed-tip">建议正文保持 3~7 行、100 字以内，刺绣留白最美观。</div>
+              <label class="ed-label">抬头称呼<input id="inRecipient" class="ed-input" /></label>
+              <label class="ed-label">祝福正文（每行一句）<textarea id="inLines" rows="5" class="ed-area"></textarea></label>
+              <label class="ed-label">结尾祝词<input id="inClosing" class="ed-input" /></label>
+              <label class="ed-label">署名<input id="inSig" class="ed-input" /></label>
+              <label class="ed-label">副署名 / 日期<input id="inSubSig" class="ed-input" /></label>
+            </div>
             <div class="ed-btns">
               <button id="btnResetTxt" type="button" class="btn-reset">恢复初始</button>
               <button id="btnSaveTxt" type="button" class="btn-save">保存</button>
@@ -792,7 +836,24 @@
       document.documentElement.classList.toggle('top-fold', topFold);
       document.documentElement.classList.toggle('is-christmas', isChristmas);
 
-      const STORAGE_KEY = `popup_card_blessing_v4_${isChristmas ? 'xmas' : 'bday'}_${topFold ? 'top43' : 'horiz'}`;
+      /**
+       * 为当前贺卡计算独立隔离的本地存储 Key，杜绝同域名下不同贺卡串改祝福语
+       *
+       * @returns {string} 本地存储 Key
+       */
+      function computeStorageKey() {
+        if (typeof cfg.cardId === 'string' && cfg.cardId.trim()) {
+          return `popup_card_blessing_v5_${cfg.cardId.trim()}`;
+        }
+        const seed = `${isChristmas ? 'xmas' : 'bday'}|${topFold ? 'v43' : 'h'}|${location.pathname}|${JSON.stringify(cfg.blessing || {})}`;
+        let h = 2166136261;
+        for (let i = 0; i < seed.length; i++) {
+          h ^= seed.charCodeAt(i);
+          h = Math.imul(h, 16777619);
+        }
+        return `popup_card_blessing_v5_${(h >>> 0).toString(16)}`;
+      }
+      const STORAGE_KEY = computeStorageKey();
 
       // 按主题与版式初始化标题与界面文案（圣诞模式 0 生日残留）
       if (isChristmas) {
@@ -962,12 +1023,12 @@
         const archLayer = document.getElementById('archLayer');
         const charLayer = document.getElementById('charLayer');
 
-        // 1. 花拱尺寸适配
+        // 1. 花拱尺寸适配（严格按原图纵横比等比适配，绝不强行拉伸窄花拱）
         if (archImgEl.naturalWidth) {
-          const maxW = topFold ? 542 : 536;
+          const maxW = topFold ? 536 : 536;
           const maxH = topFold ? 224 : 316;
           const s = Math.min(maxW / archImgEl.naturalWidth, maxH / archImgEl.naturalHeight);
-          layout.archW = Math.round(topFold ? maxW : archImgEl.naturalWidth * s);
+          layout.archW = Math.round(archImgEl.naturalWidth * s);
           layout.archH = Math.round(archImgEl.naturalHeight * s);
           Object.assign(archLayer.style, {
             width: layout.archW + 'px',
@@ -1130,18 +1191,19 @@
       };
 
       /**
-       * 根据窗口尺寸自适应缩放舞台，保证横版与新版 4:3 上下翻折版在手机与电脑端都完整舒适居中
+       * 根据窗口尺寸与 3D 透视投影余量自适应缩放舞台，
+       * 确保横版与 4:3 上下翻折版在 390x844、375x667 手机屏及拖拽偏转下均完整居中、零裁边
        */
       function updateScale() {
         const vw = window.innerWidth, vh = window.innerHeight;
         const stageH = document.getElementById('stageWrap').clientHeight || (vh - 110);
         if (topFold) {
-          // 展开 560x840 (2:3)，合上 560x420 (4:3 横向长方形)
-          stageScale = Math.max(0.28, Math.min(1.06, Math.min((vw - 24) / 600, (stageH - 22) / 860)));
-          closedScale = Math.max(0.36, Math.min(1.06, Math.min((vw - 32) / 585, (stageH - 28) / 450)));
+          // 计入 rotateX(46°) 透视近端约 1.16x 放大与偏转余量，保证小屏左右安全留白
+          stageScale = Math.max(0.24, Math.min(1.02, Math.min((vw - 28) / 700, (stageH - 28) / 910)));
+          closedScale = Math.max(0.28, Math.min(1.02, Math.min((vw - 32) / 620, (stageH - 28) / 470)));
           return;
         }
-        stageScale = Math.max(0.24, Math.min(1.16, Math.min((vw - 24) / 900, (stageH - 24) / 575)));
+        stageScale = Math.max(0.22, Math.min(1.12, Math.min((vw - 28) / 1000, (stageH - 28) / 610)));
       }
       updateScale();
       window.addEventListener('resize', updateScale);
@@ -1149,45 +1211,53 @@
         new ResizeObserver(updateScale).observe(document.getElementById('stageWrap'));
       }
 
+      const LEAF_PHASE_END = 0.56;
+      const POPUP_GATE = 0.58;
+
       /**
-       * 新版 4:3 横向长方形上下翻折零穿模渲染帧
+       * 新版 4:3 横向长方形上下翻折两段式零穿模渲染帧：
+       * 阶段 1 (0 ~ 0.56) 上封面完成翻越并稳停在 -26°；阶段 2 (0.58 ~ 1) 立体件从安全底座角度平滑弹起，全程 0 穿模
        *
        * @param {number} p - 翻开进度（0 = 合上 4:3 横矩形，1 = 完全向上掀开）
        */
       function renderTopFold4x3(p) {
-        const scale = closedScale + (stageScale - closedScale) * p;
-        const shiftY = -206 + 218 * p;
-        els.rig.style.transform = `scale(${scale.toFixed(4)}) translate3d(0px, ${shiftY.toFixed(1)}px, 0px) rotateX(${(8 + 38 * p + userTiltX).toFixed(2)}deg) rotateY(${userTiltY.toFixed(2)}deg)`;
+        const leafT = Math.min(1, p / LEAF_PHASE_END);
+        const leafEase = 1 - Math.pow(1 - leafT, 2.2);
+        const scale = closedScale + (stageScale - closedScale) * leafEase;
+        const shiftY = -206 + 218 * leafEase;
+        els.rig.style.transform = `scale(${scale.toFixed(4)}) translate3d(0px, ${shiftY.toFixed(1)}px, 0px) rotateX(${(8 + 38 * leafEase + userTiltX).toFixed(2)}deg) rotateY(${userTiltY.toFixed(2)}deg)`;
         els.shadow.style.transform = `translate3d(0px, 16px, -24px)`;
-        // 上页从 -179.4° 向上掀开至 -26°（优雅微翘背景墙，与花拱之间张开宽阔防穿模夹角）
-        els.left.style.transform = `translateZ(${(3.2 * (1 - p)).toFixed(2)}px) rotateX(${(-179.4 + 153.4 * p).toFixed(2)}deg)`;
+        // 阶段 1 结束时上页稳停在 -26°，与后续立起的立体花拱张开安全夹角
+        els.left.style.transform = `translateZ(${(3.2 * (1 - leafEase)).toFixed(2)}px) rotateX(${(-179.4 + 153.4 * leafEase).toFixed(2)}deg)`;
         els.right.style.transform = `rotateX(0deg)`;
         els.coverTip.style.opacity = p < 0.08 ? '1' : '0';
 
-        // 仅当上封面完全翻越 -90°（p >= 0.46）离开下页正上方后，立体件才平滑弹起，彻底消灭拍穿
-        if (p < 0.46) {
+        // 仅当上封面完全翻越 -90° 并停稳在安全区后才显示并抬起立体部件，彻底消灭中间帧穿模
+        if (p < POPUP_GATE) {
           popupStageEl.classList.add('popup-hidden');
           return;
         }
         popupStageEl.classList.remove('popup-hidden');
-        const lift = (p - 0.46) / 0.54;
+        const lift = (p - POPUP_GATE) / (1 - POPUP_GATE);
         const rise = Math.sin(lift * Math.PI / 2);
+        const sy = Math.max(0.04, rise).toFixed(4);
 
-        // 4 条互相独立的前后安全走廊（ΔY 均 > 100px，零碰撞零穿模）
-        els.arch.style.transform = `translate3d(0px, 12px, 6px) rotateX(${(-66 * rise).toFixed(2)}deg)`;
-        els.char.style.transform = `translate3d(0px, 236px, 14px) rotateX(${(-70 * rise).toFixed(2)}deg)`;
+        // 全程固定在安全立面夹角之上沿折线底座平滑长起，确保任意采样帧与上下页零交点
+        els.arch.style.transform = `translate3d(0px, 14px, 10px) rotateX(-68deg) scaleY(${sy})`;
+        els.char.style.transform = `translate3d(0px, 240px, 16px) rotateX(-70deg) scaleY(${sy})`;
         els.charShadow.style.opacity = (0.28 * rise).toFixed(3);
-        els.charShadow.style.transform = `translate3d(0px, 240px, 2px) scale(${(0.72 + 0.28 * rise).toFixed(3)})`;
+        els.charShadow.style.transform = `translate3d(0px, 244px, 2px) scale(${(0.72 + 0.28 * rise).toFixed(3)})`;
 
-        propSlotEl.style.transform = `translate3d(${layout.propX}px, ${layout.propY}px, 8px)`;
-        els.prop.style.transform = `rotateX(${(-70 * rise).toFixed(2)}deg)`;
+        propSlotEl.style.transform = `translate3d(${layout.propX}px, ${layout.propY}px, 10px)`;
+        els.prop.style.transform = `rotateX(-70deg) scaleY(${sy})`;
 
         envSlotEl.style.transform = `translate3d(${layout.envX}px, ${layout.envY}px, 10px)`;
-        els.env.style.transform = `rotateX(${(-64 * rise).toFixed(2)}deg)`;
+        els.env.style.transform = `rotateX(-64deg) scaleY(${sy})`;
       }
 
       /**
-       * 横版左右对折零穿模主渲染循环（时间驱动帧率无关 + 纸页微折 ±3.5° + 左侧道具实时贴合左页角度，任意中间帧 0 穿模）
+       * 横版左右对折两段式零穿模主渲染循环：
+       * 阶段 1 (0 ~ 0.56) 左右纸页翻平停稳在 ±3.5°；阶段 2 (0.58 ~ 1) 4 层立体纸雕在安全 Z 走廊上平滑长起，任意中间帧 0 相交
        *
        * @param {number} [ts] - requestAnimationFrame 时间戳
        */
@@ -1199,8 +1269,7 @@
 
         const target = isOpen ? 1 : 0;
         const diff = target - openProgress;
-        // 采用时间无关指数阻尼，无论低帧率或高刷屏均在约 0.85 秒内精准丝滑落位
-        const stepFactor = 1 - Math.exp(-dt * 5.6);
+        const stepFactor = 1 - Math.exp(-dt * 4.8);
         openProgress = Math.abs(diff) > 0.0012 ? openProgress + diff * stepFactor : target;
 
         const p = openProgress;
@@ -1210,28 +1279,32 @@
           return;
         }
 
-        const cx = -215 * (1 - p);
-        const scale = stageScale + (Math.max(0.42, stageScale) - stageScale) * (1 - p);
-        els.rig.style.transform = `scale(${scale.toFixed(4)}) translate3d(${cx.toFixed(1)}px, ${(40 * p).toFixed(1)}px, 0px) rotateX(${(10 + 38 * p + userTiltX).toFixed(2)}deg) rotateY(${(-4 * (1 - p) + userTiltY).toFixed(2)}deg)`;
-        els.shadow.style.width = `${(440 + 420 * p).toFixed(1)}px`;
-        els.shadow.style.transform = `translate3d(${(215 * (1 - p)).toFixed(1)}px, 20px, -24px)`;
+        const leafT = Math.min(1, p / LEAF_PHASE_END);
+        const leafEase = 1 - Math.pow(1 - leafT, 2.2);
 
-        // 展开书脊微折角 ±3.5°（sin 3.5° = 0.06105），兼顾真实纸书纵深与极低纸面翘起
-        const pageAngle = 3.5 * p;
-        const leftAngle = 179.4 * (1 - p) + pageAngle;
-        els.left.style.transform = `translateZ(${(3.2 * (1 - p)).toFixed(2)}px) rotateY(${leftAngle.toFixed(2)}deg)`;
+        const cx = -215 * (1 - leafEase);
+        const scale = stageScale + (Math.max(0.42, stageScale) - stageScale) * (1 - leafEase);
+        els.rig.style.transform = `scale(${scale.toFixed(4)}) translate3d(${cx.toFixed(1)}px, ${(40 * leafEase).toFixed(1)}px, 0px) rotateX(${(10 + 38 * leafEase + userTiltX).toFixed(2)}deg) rotateY(${(-4 * (1 - leafEase) + userTiltY).toFixed(2)}deg)`;
+        els.shadow.style.width = `${(440 + 420 * leafEase).toFixed(1)}px`;
+        els.shadow.style.transform = `translate3d(${(215 * (1 - leafEase)).toFixed(1)}px, 20px, -24px)`;
+
+        // 阶段 1 完成翻页并停稳在微折角 ±3.5°
+        const pageAngle = 3.5 * leafEase;
+        const leftAngle = 179.4 * (1 - leafEase) + pageAngle;
+        els.left.style.transform = `translateZ(${(3.2 * (1 - leafEase)).toFixed(2)}px) rotateY(${leftAngle.toFixed(2)}deg)`;
         els.right.style.transform = `rotateY(${(-pageAngle).toFixed(2)}deg)`;
         els.coverTip.style.opacity = p < 0.08 ? '1' : '0';
 
-        // 物理防劈穿安全阀：待左页翻越并大幅落向左半侧（p >= 0.62）后立体件再平滑立起，杜绝任意中间帧切穿
-        if (p < 0.62) {
+        // 仅当左页已翻平落位后才露出并弹起立体件，彻底杜绝半开时左页切穿人物/花拱
+        if (p < POPUP_GATE) {
           popupStageEl.classList.add('popup-hidden');
           requestAnimationFrame(render3DLoop);
           return;
         }
         popupStageEl.classList.remove('popup-hidden');
-        const lift = (p - 0.62) / 0.38;
+        const lift = (p - POPUP_GATE) / (1 - POPUP_GATE);
         const rise = Math.sin(lift * Math.PI / 2);
+        const sy = Math.max(0.04, rise).toFixed(4);
 
         const rad = pageAngle * Math.PI / 180;
         const sinA = Math.sin(rad);
@@ -1240,28 +1313,27 @@
         const sinL = Math.sin(leftRad);
         const cosL = Math.cos(leftRad);
 
-        // Layer 1：后景拱门基准高度实时高于左/右纸页在拱门边缘的翘起高度 + 10px，任意角度 0 切穿
-        const archSafeSin = Math.max(sinA, Math.min(sinL, 0.36));
-        const archBaseZ = (layout.archW * 0.5) * archSafeSin + 10;
-        els.arch.style.transform = `translate3d(0px, -46px, ${archBaseZ.toFixed(1)}px) rotateX(${(-68 * rise).toFixed(2)}deg)`;
+        // Layer 1：后景拱门基准高于两侧翘起纸面 + 14px，全程 0 切穿
+        const archBaseZ = (layout.archW * 0.5) * Math.max(sinA, sinL) + 14;
+        els.arch.style.transform = `translate3d(0px, -46px, ${archBaseZ.toFixed(1)}px) rotateX(-68deg) scaleY(${sy})`;
 
-        // Layer 2：中央人物基准高度高于人物左右边缘纸面翘起高度 + 16px，与拱门前后相距 ΔY=204px
-        const charBaseZ = (layout.charW * 0.5) * Math.max(sinA, Math.min(sinL, 0.25)) + 16;
-        els.char.style.transform = `translate3d(0px, 158px, ${charBaseZ.toFixed(1)}px) rotateX(${(-70 * rise).toFixed(2)}deg)`;
+        // Layer 2：中央人物基准高于边缘翘起纸面 + 18px，与拱门前后相距 ΔY=204px
+        const charBaseZ = (layout.charW * 0.5) * Math.max(sinA, sinL) + 18;
+        els.char.style.transform = `translate3d(0px, 158px, ${charBaseZ.toFixed(1)}px) rotateX(-70deg) scaleY(${sy})`;
         els.charShadow.style.opacity = (0.28 * rise).toFixed(3);
         els.charShadow.style.transform = `translate3d(0px, 162px, ${(charBaseZ - 6).toFixed(1)}px) scale(${(0.7 + 0.3 * rise).toFixed(3)})`;
 
-        // Layer 3：左前道具严格跟随左页实时角度 leftAngle 贴合左页表面 + 8px，即使在动画途中也绝不穿底
+        // Layer 3：左前道具紧贴左页平面 + 10px 之上，零穿底
         const pGX = layout.propX * cosL;
-        const pGZ = -layout.propX * sinL + 8;
+        const pGZ = -layout.propX * sinL + 10;
         propSlotEl.style.transform = `translate3d(${pGX.toFixed(1)}px, ${layout.propY}px, ${pGZ.toFixed(1)}px) rotateY(${leftAngle.toFixed(2)}deg)`;
-        els.prop.style.transform = `rotateX(${(-70 * rise).toFixed(2)}deg)`;
+        els.prop.style.transform = `rotateX(-70deg) scaleY(${sy})`;
 
-        // Layer 4：右前火漆信封严格贴合右页平面 + 8px，右下角永不插进右页纸板
+        // Layer 4：右前火漆信封紧贴右页平面 + 10px 之上，右下角永不插进右页纸板
         const eGX = layout.envX * cosA;
-        const eGZ = layout.envX * sinA + 8;
+        const eGZ = layout.envX * sinA + 10;
         envSlotEl.style.transform = `translate3d(${eGX.toFixed(1)}px, ${layout.envY}px, ${eGZ.toFixed(1)}px) rotateY(${(-pageAngle).toFixed(2)}deg)`;
-        els.env.style.transform = `rotateX(${(-62 * rise).toFixed(2)}deg)`;
+        els.env.style.transform = `rotateX(-64deg) scaleY(${sy})`;
 
         requestAnimationFrame(render3DLoop);
       }
@@ -1288,8 +1360,12 @@
       const ACTIVE_SCORE = isChristmas ? CHRISTMAS_SCORE : BIRTHDAY_SCORE;
       const BEAT_MS = isChristmas ? 420 : 560;
 
+      const MUSIC_MASTER_GAIN = 0.84;
+      let mComp = null;
+
       /**
-       * 在用户点击手势同步周期内初始化并唤醒共用 Web Audio 上下文（根治 iOS 音频冻结）
+       * 在用户点击手势同步周期内初始化并唤醒共用 Web Audio 上下文：
+       * 串接 DynamicsCompressorNode 防破音限幅器，使手机 50% 日常音量也能清脆响亮、100% 音量绝不爆音
        *
        * @returns {AudioContext | null} 可用的音频上下文
        */
@@ -1299,12 +1375,33 @@
             const AC = window.AudioContext || window.webkitAudioContext;
             if (!AC) return null;
             mCtx = new AC();
-            mGain = mCtx.createGain(); mGain.gain.value = 0.24; mGain.connect(mCtx.destination);
-            mRev = mCtx.createGain(); mRev.gain.value = 0.34;
+            mComp = mCtx.createDynamicsCompressor();
+            mComp.threshold.value = -10;
+            mComp.knee.value = 12;
+            mComp.ratio.value = 6;
+            mComp.attack.value = 0.003;
+            mComp.release.value = 0.14;
+            mComp.connect(mCtx.destination);
+
+            mGain = mCtx.createGain();
+            mGain.gain.value = MUSIC_MASTER_GAIN;
+            mGain.connect(mComp);
+
+            mRev = mCtx.createGain();
+            mRev.gain.value = 0.36;
             const dly = mCtx.createDelay(); dly.delayTime.value = 0.17;
-            const fb = mCtx.createGain(); fb.gain.value = 0.26;
-            const lp = mCtx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2500;
+            const fb = mCtx.createGain(); fb.gain.value = 0.28;
+            const lp = mCtx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3200;
             mRev.connect(dly); dly.connect(lp); lp.connect(fb); fb.connect(dly); lp.connect(mGain);
+
+            // 发送极短静音脉冲激活部分移动浏览器音频通道
+            try {
+              const unlockBuf = mCtx.createBuffer(1, 1, mCtx.sampleRate);
+              const unlockSrc = mCtx.createBufferSource();
+              unlockSrc.buffer = unlockBuf;
+              unlockSrc.connect(mCtx.destination);
+              unlockSrc.start(0);
+            } catch {}
           }
           if (mCtx.state === 'suspended') mCtx.resume().catch(() => {});
           return mCtx;
@@ -1314,7 +1411,7 @@
       }
 
       /**
-       * 拨动八音盒钢齿发出清脆带泛音的机械八音盒音色
+       * 拨动八音盒钢齿发出温暖饱满的三层谐波机械八音盒音色（针对手机小扬声器声学曲线优化）
        *
        * @param {number} f - 音符基频（Hz）
        * @param {number} v - 相对音量（0 ~ 1）
@@ -1322,15 +1419,29 @@
       function pluck(f, v) {
         if (!mCtx || !f) return;
         const now = mCtx.currentTime;
+        // 主基波：厚实温暖主音
         const o1 = mCtx.createOscillator(), g1 = mCtx.createGain();
         o1.type = 'sine'; o1.frequency.setValueAtTime(f, now);
-        g1.gain.setValueAtTime(0.0001, now); g1.gain.linearRampToValueAtTime(0.32 * v, now + 0.008); g1.gain.exponentialRampToValueAtTime(0.0001, now + 1.35);
-        o1.connect(g1); g1.connect(mGain); g1.connect(mRev); o1.start(now); o1.stop(now + 1.4);
+        g1.gain.setValueAtTime(0.0001, now);
+        g1.gain.linearRampToValueAtTime(0.78 * v, now + 0.007);
+        g1.gain.exponentialRampToValueAtTime(0.0001, now + 1.42);
+        o1.connect(g1); g1.connect(mGain); g1.connect(mRev); o1.start(now); o1.stop(now + 1.48);
 
+        // 二倍频八度泛音（三角波）：显著提升手机小扬声器在 50% 音量下的清晰度与甜美质感
         const o2 = mCtx.createOscillator(), g2 = mCtx.createGain();
-        o2.type = 'sine'; o2.frequency.setValueAtTime(f * 3.01, now);
-        g2.gain.setValueAtTime(0.0001, now); g2.gain.linearRampToValueAtTime(0.08 * v, now + 0.003); g2.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
-        o2.connect(g2); g2.connect(mGain); o2.start(now); o2.stop(now + 0.11);
+        o2.type = 'triangle'; o2.frequency.setValueAtTime(f * 2.0, now);
+        g2.gain.setValueAtTime(0.0001, now);
+        g2.gain.linearRampToValueAtTime(0.26 * v, now + 0.004);
+        g2.gain.exponentialRampToValueAtTime(0.0001, now + 0.42);
+        o2.connect(g2); g2.connect(mGain); g2.connect(mRev); o2.start(now); o2.stop(now + 0.45);
+
+        // 三倍频钢齿拨片泛音：还原八音盒金属敲击瞬态
+        const o3 = mCtx.createOscillator(), g3 = mCtx.createGain();
+        o3.type = 'sine'; o3.frequency.setValueAtTime(f * 3.01, now);
+        g3.gain.setValueAtTime(0.0001, now);
+        g3.gain.linearRampToValueAtTime(0.15 * v, now + 0.003);
+        g3.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
+        o3.connect(g3); g3.connect(mGain); o3.start(now); o3.stop(now + 0.13);
       }
 
       /**
@@ -1339,19 +1450,19 @@
       function stepMusic() {
         if (!musicPlaying) return;
         const [n, b, h, isEnd] = ACTIVE_SCORE[mIdx];
-        pluck(FREQ[n], 1); if (h) pluck(FREQ[h], 0.42);
+        pluck(FREQ[n], 1); if (h) pluck(FREQ[h], 0.46);
         mIdx = (mIdx + 1) % ACTIVE_SCORE.length;
         mTimer = setTimeout(stepMusic, b * BEAT_MS + (isEnd ? 1100 : 0));
       }
 
       /**
-       * 启动八音盒木质共鸣腔并播放对应节日乐曲
+       * 启动八音盒木质共鸣腔并播放对应节日乐曲（全程保持饱满清晰音量）
        */
       function startMusic() {
         if (musicPlaying) return;
         const ctx = ensureAudioCtx();
         if (ctx && mGain) {
-          mGain.gain.setValueAtTime(0.24, ctx.currentTime);
+          mGain.gain.setValueAtTime(MUSIC_MASTER_GAIN, ctx.currentTime);
           musicPlaying = true; mIdx = 0; clearTimeout(mTimer); stepMusic();
         }
         syncUI();
@@ -1366,9 +1477,9 @@
         syncUI();
       }
 
-      /* 5. 生日模式：翻开自动申请麦克风 + 超高灵敏度低频吹气（带 3.5x 放大）+ 零报错轻点/长按仿真兜底 */
-      const HOLD_START_MS = 170;
-      const BLOW_DURATION_MS = 950;
+      /* 5. 生日模式：翻开自动申请麦克风 + 宽带气流吹气检测（隔离八音盒/嗡声/单音）+ 1秒零报错长按兜底 */
+      const HOLD_START_MS = 140;
+      const BLOW_DURATION_MS = 860;
       const flameWrapEl = document.getElementById('flameWrap');
       const flameHaloEl = flameWrapEl ? flameWrapEl.querySelector('.flame-halo') : null;
 
@@ -1378,8 +1489,10 @@
       let suppressPropTimer = null, suppressStageTimer = null;
       let wishMsg = '', blowNoiseBuf = null, blowNoiseSrc = null, blowFilter = null, blowGain = null;
 
-      // 高灵敏度麦克风状态
-      let micActive = false, micAutoAttempted = false, micLevel = 0;
+      // 高灵敏度麦克风状态、翻开前预授权锁与并发请求防泄漏会话锁
+      const MIC_AUTH_TIMEOUT_MS = 5000;
+      let micActive = false, micPending = false, micPermissionDenied = false, micSessionId = 0, micAutoAttempted = false, micLevel = 0;
+      let openingInProgress = false;
       let micStream = null, micSource = null, micGainNode = null, micAnalyser = null, micRaf = null, micOwnCtx = null;
 
       /**
@@ -1491,48 +1604,55 @@
       }
 
       /**
-       * 安全停止真实麦克风流与检测循环，释放设备占用
+       * 安全停用并释放指定音频流下的全部音轨
+       *
+       * @param {MediaStream | null} stream - 目标媒体流
+       */
+      function stopStreamTracks(stream) {
+        if (!stream) return;
+        try { stream.getTracks().forEach((t) => { try { t.stop(); } catch {} }); } catch {}
+      }
+
+      /**
+       * 安全停止真实麦克风流、递增作废所有在途会话并释放设备占用，同时恢复八音盒音量
        */
       function stopMicDetector() {
+        micSessionId += 1;
+        micPending = false;
         micActive = false;
         micLevel = 0;
         if (micRaf) { cancelAnimationFrame(micRaf); micRaf = null; }
         try { if (micSource) micSource.disconnect(); } catch {}
         try { if (micGainNode) micGainNode.disconnect(); } catch {}
-        if (micStream) {
-          try { micStream.getTracks().forEach((t) => t.stop()); } catch {}
-        }
+        stopStreamTracks(micStream);
         if (micOwnCtx && micOwnCtx !== mCtx) {
           micOwnCtx.close().catch(() => {});
         }
         micStream = null; micSource = null; micGainNode = null; micAnalyser = null; micOwnCtx = null;
+        if (musicPlaying && mCtx && mGain) {
+          try { mGain.gain.setTargetAtTime(MUSIC_MASTER_GAIN, mCtx.currentTime, 0.08); } catch {}
+        }
         els.micMeterFill.style.width = '4%';
         if (!blowing) applyFlameWind(0, 0);
         syncUI();
       }
 
       /**
-       * 启动高灵敏度手机/电脑麦克风低频气流吹气检测（仅生日模式）
-       * 在用户点击翻开贺卡时自动调用；含 3.5x 软件放大、50~450Hz 低频吹气分析与两级约束自动降级，
-       * 若环境不支持或用户拒绝，静默返回绝不弹报错。
+       * 向浏览器申请一次麦克风原始音频流（内置 5 秒防卡死超时与仅约束错误降级重试，拒权不重问）
        *
-       * @param {MediaStream} [customStream] - 可选的外部测试音频流
-       * @param {AudioContext} [customCtx] - 可选的测试音频上下文
-       * @returns {Promise<boolean>} 是否成功启动监听
+       * @param {number} session - 所属会话编号
+       * @param {number} [timeoutMs=MIC_AUTH_TIMEOUT_MS] - 超时毫秒数（0 表示不限时）
+       * @returns {Promise<MediaStream | null>} 成功返回音轨流，拒绝/超时/过期返回 null
        */
-      async function startMicWithStream(customStream, customCtx) {
-        if (isChristmas || !isOpen || !candleLit || micActive) return false;
-        // 关键：在任何 await 之前同步初始化/唤醒 AudioContext，彻底解决 iPhone 授权后静音冻结问题
-        const ctx = customCtx || ensureAudioCtx();
-        if (!ctx) return false;
-
-        let stream = customStream || null;
-        if (!stream) {
-          if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            return false;
-          }
+      async function requestMicStreamSafe(session, timeoutMs = MIC_AUTH_TIMEOUT_MS) {
+        if (micPermissionDenied || !window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          return null;
+        }
+        let timedOut = false;
+        let timer = null;
+        const doAcquire = async () => {
           try {
-            stream = await navigator.mediaDevices.getUserMedia({
+            return await navigator.mediaDevices.getUserMedia({
               audio: {
                 echoCancellation: false,
                 noiseSuppression: false,
@@ -1543,46 +1663,129 @@
                 googHighpassFilter: false
               }
             });
-          } catch {
-            // 部分手机浏览器不支持高级音频参数，自动静默降级为最通用基础录音模式
-            try {
-              stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            } catch {
-              return false;
+          } catch (err) {
+            const errName = (err && err.name) || '';
+            if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError' || errName === 'SecurityError') {
+              micPermissionDenied = true;
             }
+            const canRetryBasic = errName === 'OverconstrainedError' || errName === 'ConstraintNotSatisfiedError' || errName === 'TypeError';
+            if (!canRetryBasic || timedOut || session !== micSessionId) return null;
+            try {
+              return await navigator.mediaDevices.getUserMedia({ audio: true });
+            } catch (err2) {
+              const err2Name = (err2 && err2.name) || '';
+              if (err2Name === 'NotAllowedError' || err2Name === 'PermissionDeniedError' || err2Name === 'SecurityError') {
+                micPermissionDenied = true;
+              }
+              return null;
+            }
+          }
+        };
+
+        const acquirePromise = doAcquire().then((st) => {
+          if (timedOut || session !== micSessionId) {
+            stopStreamTracks(st);
+            return null;
+          }
+          return st;
+        });
+
+        if (!timeoutMs || timeoutMs <= 0) return acquirePromise;
+
+        const timeoutPromise = new Promise((resolve) => {
+          timer = setTimeout(() => {
+            timedOut = true;
+            resolve(null);
+          }, timeoutMs);
+        });
+
+        const result = await Promise.race([acquirePromise, timeoutPromise]);
+        if (timer) clearTimeout(timer);
+        return result;
+      }
+
+      /**
+       * 启动高灵敏度宽带低频吹气检测（仅生日模式）：
+       * 1. 会话编号防竞态：快开快合或超时迟到返回立即关停其音轨，零泄漏；
+       * 2. 拒权零重问：仅当不支持高级约束报错时降级试基础音频，权限被拒立刻静默进长按兜底；
+       * 3. 采样率自适应宽带平坦度识别：捕捉低频随机吹气气流，隔离高响度八音盒、180Hz 嗡声与 440Hz 单音。
+       *
+       * @param {MediaStream} [customStream] - 可选的预授权或外部测试音频流
+       * @param {AudioContext} [customCtx] - 可选的测试音频上下文
+       * @returns {Promise<boolean>} 是否成功启动监听
+       */
+      async function startMicWithStream(customStream, customCtx) {
+        if (isChristmas || !isOpen || !candleLit || micActive || micPending) {
+          if (customStream) stopStreamTracks(customStream);
+          return false;
+        }
+        const session = ++micSessionId;
+        micPending = true;
+        const ctx = customCtx || ensureAudioCtx();
+        if (!ctx) {
+          if (customStream) stopStreamTracks(customStream);
+          if (session === micSessionId) micPending = false;
+          return false;
+        }
+
+        let stream = customStream || null;
+        if (!stream) {
+          stream = await requestMicStreamSafe(session, MIC_AUTH_TIMEOUT_MS);
+          if (!stream) {
+            if (session === micSessionId) micPending = false;
+            return false;
           }
         }
 
-        if (!isOpen || !candleLit) {
-          if (!customStream) try { stream.getTracks().forEach((t) => t.stop()); } catch {}
+        if (session !== micSessionId || !isOpen || !candleLit) {
+          stopStreamTracks(stream);
+          if (session === micSessionId) micPending = false;
           return false;
         }
 
         try {
           if (ctx.state === 'suspended') await ctx.resume();
+          if (session !== micSessionId || !isOpen || !candleLit) {
+            stopStreamTracks(stream);
+            if (session === micSessionId) micPending = false;
+            return false;
+          }
+
           micOwnCtx = ctx;
           micStream = stream;
           micSource = ctx.createMediaStreamSource(stream);
-          // 3.2 倍软件增益放大，确保手机硬件降噪压低吹气音量后仍能高灵敏捕捉微小气流
           micGainNode = ctx.createGain();
           micGainNode.gain.value = 3.2;
           micAnalyser = ctx.createAnalyser();
-          micAnalyser.fftSize = 512;
-          micAnalyser.smoothingTimeConstant = 0.28;
+          // 使用 1024 点高精度 FFT，按实际采样率精准区分窄带嗡声/乐音单峰与宽带湍流吹气
+          micAnalyser.fftSize = 1024;
+          micAnalyser.smoothingTimeConstant = 0.25;
 
           micSource.connect(micGainNode);
           micGainNode.connect(micAnalyser);
 
+          const sr = ctx.sampleRate || 48000;
+          const binHz = sr / micAnalyser.fftSize;
+          const totalBins = micAnalyser.frequencyBinCount;
+          const lowStart = Math.max(1, Math.floor(70 / binHz));
+          const lowEnd = Math.min(totalBins - 1, Math.max(lowStart + 2, Math.ceil(360 / binHz)));
+          const midStart = lowEnd + 1;
+          const midEnd = Math.min(totalBins - 1, Math.max(midStart + 3, Math.ceil(1350 / binHz)));
+          const broadEnd = Math.min(totalBins - 1, Math.max(lowStart + 6, Math.ceil(680 / binHz)));
+          const highStart = Math.min(totalBins - 1, Math.floor(1550 / binHz));
+          const highEnd = Math.min(totalBins - 1, Math.max(highStart + 2, Math.ceil(3600 / binHz)));
+
           const timeBuf = new Float32Array(micAnalyser.fftSize);
-          const freqBuf = new Uint8Array(micAnalyser.frequencyBinCount);
+          const freqBuf = new Uint8Array(totalBins);
           const micStartTs = performance.now();
           let calFrames = 0, sumRms = 0, sumLow = 0;
           let baseRms = 0.012, baseLow = 18, charge = 0;
+          micPending = false;
           micActive = true;
           syncUI();
 
           const loop = (now) => {
-            if (!micActive || !isOpen || !candleLit) return;
+            if (session !== micSessionId || !micActive || !isOpen || !candleLit) return;
             micAnalyser.getFloatTimeDomainData(timeBuf);
             micAnalyser.getByteFrequencyData(freqBuf);
 
@@ -1590,46 +1793,71 @@
             for (let i = 0; i < timeBuf.length; i++) sq += timeBuf[i] * timeBuf[i];
             const rms = Math.sqrt(sq / timeBuf.length);
 
-            // 抓取 90Hz ~ 380Hz 吹气核心低频风声（bin 1~4）与 450Hz ~ 1700Hz 音乐/纯音段（bin 5~18）
             let lowSum = 0;
-            for (let i = 1; i <= 4; i++) lowSum += freqBuf[i];
-            const lowAvg = lowSum / 4;
+            for (let i = lowStart; i <= lowEnd; i++) lowSum += freqBuf[i];
+            const lowAvg = lowSum / (lowEnd - lowStart + 1);
 
             let midSum = 0;
-            for (let i = 5; i <= 18; i++) midSum += freqBuf[i];
-            const midAvg = midSum / 14;
+            for (let i = midStart; i <= midEnd; i++) midSum += freqBuf[i];
+            const midAvg = midSum / Math.max(1, midEnd - midStart + 1);
 
-            // 前 650ms 等待翻开动画与八音盒起音稳定，防止开卡瞬间自吹自灭
-            if (now - micStartTs < 650) {
+            let highSum = 0;
+            for (let i = highStart; i <= highEnd; i++) highSum += freqBuf[i];
+            const highAvg = highSum / Math.max(1, highEnd - highStart + 1);
+
+            // 前 700ms 等待动画展开与高响度八音盒起音平稳，杜绝开卡瞬间自触发
+            if (now - micStartTs < 700) {
               micRaf = requestAnimationFrame(loop);
               return;
             }
 
-            // 采样 16 帧真实环境底噪（包含八音盒背景音）
             if (calFrames < 16) {
               sumRms += rms; sumLow += lowAvg; calFrames++;
               if (calFrames === 16) {
-                baseRms = Math.min(0.08, Math.max(0.008, sumRms / 16));
-                baseLow = Math.min(110, Math.max(12, sumLow / 16));
+                baseRms = Math.min(0.095, Math.max(0.008, sumRms / 16));
+                baseLow = Math.min(115, Math.max(12, sumLow / 16));
               }
               micRaf = requestAnimationFrame(loop);
               return;
             }
 
-            // 频谱护栏：吹气气流在低频段（90~380Hz）占主导，过滤掉纯八音盒高频单音与虚拟 440Hz 测试音
-            const isBreathSpectrum = lowAvg >= midAvg * 0.62;
+            // 宽带平坦度检测（70~680Hz 区间）：识别宽带随机气流 vs 高响度八音盒/180Hz 嗡声/440Hz 单音
+            let maxBroadDb = 0;
+            let totalLinPower = 0;
+            const binLin = [];
+            for (let i = lowStart; i <= broadEnd; i++) {
+              const v = freqBuf[i];
+              if (v > maxBroadDb) maxBroadDb = v;
+              const p = Math.pow(10, v / 65);
+              binLin.push(p);
+              totalLinPower += p;
+            }
+            let activeBins = 0;
+            const activeFloor = Math.max(24, maxBroadDb - 42);
+            for (let i = lowStart; i <= broadEnd; i++) {
+              if (freqBuf[i] >= activeFloor) activeBins++;
+            }
+            let top2PairMax = 0;
+            for (let k = 0; k < binLin.length; k++) {
+              const pair = binLin[k] + (k + 1 < binLin.length ? binLin[k + 1] : 0);
+              if (pair > top2PairMax) top2PairMax = pair;
+            }
+            const activeRatio = activeBins / Math.max(1, broadEnd - lowStart + 1);
+            const top2LinRatio = totalLinPower > 0 ? (top2PairMax / totalLinPower) : 1;
+
+            // 真吹气判据：低频风能占主（压过八音盒中高频音阶与二倍泛音）+ 连续宽带起风 + 无单音孤立尖峰
+            const isBroadbandWind = activeRatio >= 0.38 && top2LinRatio <= 0.68 && lowAvg >= midAvg * 0.92 && lowAvg >= highAvg * 1.15;
             const rmsThresh = Math.max(0.026, baseRms * 1.95);
             const lowThresh = Math.max(36, baseLow * 1.65);
-            const isWindHit = isBreathSpectrum && rms >= rmsThresh && lowAvg >= lowThresh;
+            const isWindHit = isBroadbandWind && rms >= rmsThresh && lowAvg >= lowThresh;
 
             if (isWindHit) {
               const rmsRatio = (rms - baseRms) / rmsThresh;
               const lowRatio = (lowAvg - baseLow) / lowThresh;
               const windScore = Math.min(1.8, Math.max(rmsRatio, lowRatio));
               micLevel = Math.min(1, windScore * 0.85);
-              charge = Math.min(1, charge + 0.042 + Math.min(0.045, windScore * 0.022));
+              charge = Math.min(1, charge + 0.045 + Math.min(0.045, windScore * 0.022));
             } else {
-              // 非吹气时缓慢自适应跟踪环境底噪，杜绝缓慢累加误吹灭
               baseRms = baseRms * 0.96 + rms * 0.04;
               baseLow = baseLow * 0.96 + lowAvg * 0.04;
               micLevel = Math.max(0, micLevel * 0.72);
@@ -1649,7 +1877,8 @@
           micRaf = requestAnimationFrame(loop);
           return true;
         } catch {
-          stopMicDetector();
+          stopStreamTracks(stream);
+          if (session === micSessionId) stopMicDetector();
           return false;
         }
       }
@@ -1772,9 +2001,19 @@
       } catch {}
 
       /**
-       * 将祝福语内容渲染到手工棉麻毛边刺绣布贴中
+       * 将祝福语内容渲染到手工棉麻毛边刺绣布贴中，并按正文长度与行数自动启用紧凑字号档位
        */
       function renderBlessing() {
+        const lineCount = (blessing.lines || []).length;
+        const charCount = (blessing.lines || []).reduce((acc, s) => acc + (s ? s.length : 0), 0);
+        const isCompact = lineCount >= 8 || charCount >= 92;
+        const isDense = !isCompact && (lineCount >= 6 || charCount >= 64);
+
+        [document.getElementById('linenPhotoCard'), document.getElementById('linenCssCard')].forEach((cardEl) => {
+          cardEl.classList.toggle('text-compact', isCompact);
+          cardEl.classList.toggle('text-dense', isDense);
+        });
+
         ['pView', 'cView'].forEach((prefix) => {
           document.getElementById(prefix + 'Recipient').textContent = blessing.recipient || '';
           const box = document.getElementById(prefix + 'Lines'); box.innerHTML = '';
@@ -1812,6 +2051,7 @@
 
         let tip = '';
         if (wishMsg) tip = wishMsg;
+        else if (openingInProgress) tip = '正在准备吹蜡烛麦克风，请在弹窗中点击允许或跳过';
         else if (!isChristmas && blowing) tip = '轻轻吹气中，继续按住即可吹灭蜡烛';
         else if (!isChristmas && isOpen && candleLit && micActive) tip = '对着麦克风轻轻吹气即可吹灭蜡烛';
         else if (!isOpen) tip = topFold ? '' : (isChristmas ? '轻触封面翻开立体圣诞贺卡' : '轻触封面翻开立体生日贺卡');
@@ -1819,38 +2059,79 @@
         els.statusText.textContent = tip;
         els.statusPill.classList.toggle('hidden', !tip);
         els.statusDot.classList.toggle('blowing', !isChristmas && blowing);
-        els.statusDot.classList.toggle('mic-live', !isChristmas && !blowing && micActive && !wishMsg);
+        els.statusDot.classList.toggle('mic-live', !isChristmas && !blowing && (micActive || openingInProgress) && !wishMsg);
         els.micMeterTrack.classList.toggle('show', !isChristmas && isOpen && candleLit && micActive && !wishMsg && !blowing);
       }
       syncUI();
 
       /* 9. 交互与防穿模点击命中绑定 */
       /**
-       * 翻开或合上贺卡：翻开时同步唤醒音频、奏响八音盒，生日模式自动尝试请求麦克风吹气
+       * 翻开或合上贺卡：
+       * 生日模式点击翻开时，先在翻开动画开始之前完成麦克风预授权（最多等待 5 秒防内置浏览器卡死），
+       * 授权或跳过结束后再完整翻开贺卡并从头播放饱满音量的八音盒，彻底不打断惊喜动画。
        */
-      function toggleCard() {
-        isOpen = !isOpen;
+      async function toggleCard() {
+        if (openingInProgress) return;
         if (isOpen) {
-          ensureAudioCtx();
-          startMusic();
-          if (!isChristmas && candleLit) {
-            micAutoAttempted = true;
-            startMicWithStream();
-          }
-        } else {
+          isOpen = false;
           stopMicDetector();
           cancelHoldBlow(false);
           stopMusic();
+          syncUI();
+          return;
+        }
+
+        // 在用户点击手势同步周期内先激活 Web Audio，避免后续 await 导致移动端静音
+        const audioCtx = ensureAudioCtx();
+        const canPreAuth = (
+          !isChristmas &&
+          candleLit &&
+          !micPermissionDenied &&
+          window.isSecureContext &&
+          navigator.mediaDevices &&
+          typeof navigator.mediaDevices.getUserMedia === 'function'
+        );
+
+        let preStream = null;
+        if (canPreAuth) {
+          openingInProgress = true;
+          micAutoAttempted = true;
+          const preSession = ++micSessionId;
+          syncUI();
+          try {
+            preStream = await requestMicStreamSafe(preSession, MIC_AUTH_TIMEOUT_MS);
+          } catch {
+            preStream = null;
+          } finally {
+            openingInProgress = false;
+          }
+          // 若等待授权期间已被其他操作作废，立刻清理音轨
+          if (preSession !== micSessionId) {
+            stopStreamTracks(preStream);
+            syncUI();
+            return;
+          }
+        }
+
+        isOpen = true;
+        startMusic();
+        if (preStream && !isChristmas && candleLit) {
+          startMicWithStream(preStream, audioCtx);
+        } else if (preStream) {
+          stopStreamTracks(preStream);
         }
         syncUI();
       }
 
       /**
-       * 打开手工棉麻毛边刺绣祝福信弹窗
+       * 打开手工棉麻毛边刺绣祝福信弹窗，并将滚动条回顶
        */
       function openLetter() {
         cancelHoldBlow(false);
-        document.getElementById('letterModal').classList.add('open');
+        setEditorVisible(false);
+        const modal = document.getElementById('letterModal');
+        modal.classList.add('open');
+        modal.scrollTop = 0;
       }
 
       /**
@@ -1930,9 +2211,26 @@
         }
       });
 
+      const letterColsEl = document.querySelector('.letter-cols');
+      const letterModalEl = document.getElementById('letterModal');
+      function setEditorVisible(show) {
+        document.getElementById('editorBox').classList.toggle('show', show);
+        letterColsEl.classList.toggle('mobile-editing', show);
+        if (show) {
+          setTimeout(() => { letterModalEl.scrollTop = 0; }, 30);
+        }
+      }
+      // 手机端点击任一输入框弹出软键盘时，自动平滑滚入视口中央不被键盘遮挡
+      document.querySelectorAll('#editorBox .ed-input, #editorBox .ed-area').forEach((field) => {
+        field.addEventListener('focus', () => {
+          setTimeout(() => {
+            try { field.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch {}
+          }, 260);
+        });
+      });
       document.getElementById('btnCloseLetter').onclick = () => {
         document.getElementById('letterModal').classList.remove('open');
-        document.getElementById('editorBox').classList.remove('show');
+        setEditorVisible(false);
       };
       document.getElementById('btnEditToggle').onclick = () => {
         const eb = document.getElementById('editorBox');
@@ -1944,7 +2242,7 @@
           document.getElementById('inSig').value = blessing.signature || '';
           document.getElementById('inSubSig').value = blessing.subSignature || '';
         }
-        eb.classList.toggle('show', show);
+        setEditorVisible(show);
       };
       document.getElementById('btnSaveTxt').onclick = () => {
         blessing = {
@@ -1956,13 +2254,13 @@
         };
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(blessing)); } catch {}
         renderBlessing();
-        document.getElementById('editorBox').classList.remove('show');
+        setEditorVisible(false);
       };
       document.getElementById('btnResetTxt').onclick = () => {
         blessing = JSON.parse(JSON.stringify(cfg.blessing || {}));
         try { localStorage.removeItem(STORAGE_KEY); } catch {}
         renderBlessing();
-        document.getElementById('editorBox').classList.remove('show');
+        setEditorVisible(false);
       };
 
       const stage = document.getElementById('stageWrap');
@@ -1987,9 +2285,13 @@
         if (!dragging) return;
         const dx = e.clientX - sx, dy = e.clientY - sy; moved = Math.hypot(dx, dy);
         if (moved >= 10 && blowOrigin === 'cake') cancelHoldBlow(false);
-        // 安全防穿模视角钳制
-        userTiltY = Math.max(-26, Math.min(26, by + dx * 0.13));
-        userTiltX = Math.max(-16, Math.min(18, bx - dy * 0.11));
+        // 安全防穿模与防小屏出界视角钳制
+        const isNarrow = window.innerWidth <= 520;
+        const maxY = isNarrow ? 14 : 24;
+        const minX = isNarrow ? -10 : -16;
+        const maxX = isNarrow ? 12 : 18;
+        userTiltY = Math.max(-maxY, Math.min(maxY, by + dx * 0.13));
+        userTiltX = Math.max(minX, Math.min(maxX, bx - dy * 0.11));
         syncUI();
       });
       ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => stage.addEventListener(ev, () => {
