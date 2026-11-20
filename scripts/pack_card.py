@@ -1,8 +1,8 @@
-"""立体贺卡纯本地刀模抠图与正宗母版拼接器（V8.1 云端直装版，仅依赖 Pillow，零联网零密钥）"""
-import argparse, base64, colorsys, hashlib, io, json, os, re, sys, uuid
+"""立体贺卡纯本地刀模抠图与正宗母版拼接器（V8.2 云端直装高保真版，仅依赖 Pillow，零联网零密钥）"""
+import argparse, base64, colorsys, hashlib, io, json, math, os, random, re, sys, uuid
 from collections import deque
 from pathlib import Path
-from PIL import Image, ImageChops, ImageFilter, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 RES = Path(__file__).resolve().parent.parent / "resources"
 EXTS = (".png", ".jpg", ".jpeg", ".webp")
@@ -130,14 +130,148 @@ def align_feet(img):
 
 
 def detect_wick(rgba):
-    w, h = rgba.size; px = rgba.load(); pts = []
+    """结合竖直细柱追踪与底座实心度评分定位蛋糕单蜡烛芯（抵御上方误画花环/拱门干扰并兼容 3px 细芯）。"""
+    w, h = rgba.size; px = rgba.load()
+    def is_fg(x, y): r, g, b, a = px[x, y]; return a > 200 and (min(r, g, b) < 232 or max(r, g, b) - min(r, g, b) > 16)
+    max_sw = max(20, int(w * .095)); max_cx_drift = max(5, int(w * .02)); min_ch = max(9, int(h * .028))
+    chains, active = [], []
+    x0_scan, x1_scan = int(w * .18), int(w * .82)
+    for y in range(int(h * .02), int(h * .48)):
+        segs = []; on = False; s0 = 0
+        for x in range(x0_scan, x1_scan):
+            if is_fg(x, y):
+                if not on: on, s0 = True, x
+            elif on: on = False; segs.append((s0, x - 1))
+        if on: segs.append((s0, x1_scan - 1))
+        merged = []
+        for a0, a1 in segs:
+            if merged and a0 - merged[-1][1] <= 2: merged[-1] = (merged[-1][0], a1)
+            else: merged.append((a0, a1))
+        next_act = []
+        narrows = [(a0, a1, (a0 + a1) / 2.0, a1 - a0 + 1) for a0, a1 in merged if 1 <= a1 - a0 + 1 <= max_sw]
+        used = set()
+        for ch in active:
+            ly, lcx, lw = ch[-1][0], ch[-1][3], ch[-1][4]
+            if y - ly > 3:
+                if ch[-1][0] - ch[0][0] + 1 >= min_ch and len(ch) >= 7: chains.append(ch)
+                continue
+            cand = [(abs(cx - lcx), idx, (y, a0, a1, cx, wd)) for idx, (a0, a1, cx, wd) in enumerate(narrows)
+                    if idx not in used and abs(cx - lcx) <= max_cx_drift and wd <= lw * 2.3 + 5]
+            if cand:
+                _, idx, item = min(cand); used.add(idx); ch.append(item); next_act.append(ch)
+            else: next_act.append(ch)
+        for idx, (a0, a1, cx, wd) in enumerate(narrows):
+            if idx not in used: next_act.append([(y, a0, a1, cx, wd)])
+        active = next_act
+    for ch in active:
+        if ch[-1][0] - ch[0][0] + 1 >= min_ch and len(ch) >= 7: chains.append(ch)
+    if chains:
+        best_score, best_pt = -1e9, None
+        base_min_w = max(22, int(w * .12))
+        for ch in chains:
+            y0, y1 = ch[0][0], ch[-1][0]; ch_h = y1 - y0 + 1
+            avg_x = sum(p[3] for p in ch[:6]) / min(6, len(ch)); avg_w = sum(p[4] for p in ch) / len(ch)
+            base_cx = ch[-1][3]
+            center_score = 3.0 * (1.0 - abs(avg_x / w - .5) * 1.8)
+            slim_score = min(4.5, ch_h / max(2.2, avg_w))
+            has_cake_base = False; gap_void = 0; gap_rows = max(12, int(h * .035))
+            for cy in range(y1 + 1, min(h - 1, y1 + gap_rows)):
+                lx = int(round(base_cx))
+                row_xs = [x for x in range(max(0, lx - base_min_w), min(w, lx + base_min_w + 1)) if is_fg(x, cy)]
+                if len(row_xs) >= base_min_w: has_cake_base = True; break
+                elif len([x for x in range(max(0, lx - 6), min(w, lx + 7)) if is_fg(x, cy)]) == 0: gap_void += 1
+            score = center_score + slim_score + (6.0 if has_cake_base else 0.0) - (6.0 if (not has_cake_base and gap_void >= 4) else 0.0)
+            if score > best_score: best_score, best_pt = score, (avg_x, y0)
+        if best_pt is not None and best_score > 0:
+            return {"leftPct": round(max(22., min(78., best_pt[0] / w * 100.)), 2), "topPct": round(max(2.5, min(46., best_pt[1] / h * 100.)), 2)}
+    pts = []
     for y in range(int(h * .02), int(h * .24)):
-        xs = [x for x in range(int(w * .22), int(w * .78)) if px[x, y][3] > 200 and (min(px[x, y][:3]) < 232 or max(px[x, y][:3]) - min(px[x, y][:3]) > 16)]
+        xs = [x for x in range(int(w * .22), int(w * .78)) if is_fg(x, y)]
         if 2 <= len(xs) <= int(w * .16):
             pts.append((y, sum(xs) / len(xs)))
             if len(pts) >= 8: break
     if not pts: return {"leftPct": 44.6, "topPct": 7.5}
-    return {"leftPct": round(max(28., min(72., sum(p[1] for p in pts) / len(pts) / w * 100.)), 2), "topPct": round(max(3.5, min(20., pts[0][0] / h * 100.)), 2)}
+    return {"leftPct": round(max(28., min(72., sum(p[1] for p in pts) / len(pts) / w * 100.)), 2), "topPct": round(max(3.5, min(24., pts[0][0] / h * 100.)), 2)}
+
+
+def make_linen_card(w=496, h=678):
+    """纯 Pillow 现场合成物理级手撕毛边粗纺天然棉麻底布与立体纺锤平针锁边（耗时 ~0.12s）。"""
+    rng = random.Random(202611)
+    def build_tile(ts, seed_off):
+        r0 = random.Random(202611 + seed_off)
+        xsl = [r0.randint(-2, 2) for _ in range(ts)]
+        ysl = [r0.randint(-2, 2) for _ in range(ts)]
+        bf = bytearray(ts * ts * 3); i = 0
+        for y in range(ts):
+            py = math.sin(y * math.pi / 2.0) * 4.2; yl = ysl[y]; y2 = y // 2
+            for x in range(ts):
+                px = math.sin(x * math.pi / 2.0) * 4.2; bk = ((x // 2 + y2) % 2) * 2 - 1
+                wv = bk * 4.4 + px + py + xsl[x] + yl + r0.randint(-4, 4)
+                if r0.random() < .016: wv -= r0.randint(10, 20)
+                bf[i] = max(145, min(250, int(232 + wv)))
+                bf[i + 1] = max(135, min(244, int(223 + wv * .96)))
+                bf[i + 2] = max(116, min(226, int(204 + wv * .89)))
+                i += 3
+        return Image.frombytes("RGB", (ts, ts), bytes(bf))
+    t1, t2 = build_tile(128, 0), build_tile(191, 97)
+    b1, b2 = Image.new("RGB", (w, h)), Image.new("RGB", (w, h))
+    for ty in range(0, h, 128):
+        for tx in range(0, w, 128): b1.paste(t1, (tx, ty))
+    for ty in range(0, h, 191):
+        for tx in range(0, w, 191): b2.paste(t2, (tx, ty))
+    base = Image.blend(b1, b2, .45).filter(ImageFilter.GaussianBlur(.25))
+    sw, sh = w // 4, h // 4
+    sh_s = Image.new("L", (sw, sh), 128); sd0 = ImageDraw.Draw(sh_s)
+    sd0.rectangle([1, 1, sw - 2, sh - 2], outline=144, width=6)
+    sd0.rectangle([9, 9, sw - 10, sh - 10], outline=114, width=3)
+    sd0.ellipse([4, 2, int(sw * .72), int(sh * .64)], fill=136)
+    sh_map = sh_s.filter(ImageFilter.GaussianBlur(6)).resize((w, h), Image.Resampling.BICUBIC).point(lambda p: max(110, min(146, p)))
+    delta = sh_map.point(lambda p: max(0, (p - 128) // 2))
+    dark_d = sh_map.point(lambda p: max(0, (128 - p) // 2))
+    base = ImageChops.subtract(ImageChops.add(base, Image.merge("RGB", (delta, delta, delta))), Image.merge("RGB", (dark_d, dark_d, dark_d)))
+    # 四边顺滑纺锤形粗棉绳手缝针脚（两头尖细斜扎入布，彻底自然零圆扣感）
+    mx, my = 40, 42; segs = []
+    for cnt, p0, p1, horiz, fixed, inv in (
+        (11, mx + 6, w - mx - 6, True, my, -1), (11, mx + 6, w - mx - 6, True, h - my, 1),
+        (15, my + 6, h - my - 6, False, mx, -1), (15, my + 6, h - my - 6, False, w - mx, 1),
+    ):
+        step = (p1 - p0) / cnt; sl = step * .66
+        for i in range(cnt):
+            a = p0 + i * step + (step - sl) * .5; b = a + sl + rng.uniform(-1.2, 1.2)
+            j1, j2 = rng.uniform(-1.4, 1.4), rng.uniform(-1.4, 1.4); arch = rng.uniform(.7, 1.8) * inv
+            if horiz: segs.append((round(a), round(fixed + j1), round((a + b) * .5), round(fixed + (j1 + j2) * .5 + arch), round(b), round(fixed + j2)))
+            else: segs.append((round(fixed + j1), round(a), round(fixed + (j1 + j2) * .5 + arch), round((a + b) * .5), round(fixed + j2), round(b)))
+    sh_l = Image.new("RGBA", (w, h), (0, 0, 0, 0)); sh_d = ImageDraw.Draw(sh_l)
+    for x0, y0, xm, ym, x1, y1 in segs:
+        sh_d.line([(x0 + 1, y0 + 2), (xm + 2, ym + 3), (x1 + 1, y1 + 2)], fill=(96, 80, 62, 128), width=4, joint="curve")
+    sh_l = sh_l.filter(ImageFilter.GaussianBlur(1.5))
+    st_l = Image.new("RGBA", (w, h), (0, 0, 0, 0)); st_d = ImageDraw.Draw(st_l)
+    for x0, y0, xm, ym, x1, y1 in segs:
+        x_a1, y_a1 = round(x0 + (xm - x0) * .28), round(y0 + (ym - y0) * .28)
+        x_b1, y_b1 = round(x1 + (xm - x1) * .28), round(y1 + (ym - y1) * .28)
+        x_a2, y_a2 = round(x0 + (xm - x0) * .55), round(y0 + (ym - y0) * .55)
+        x_b2, y_b2 = round(x1 + (xm - x1) * .55), round(y1 + (ym - y1) * .55)
+        st_d.line([(x0, y0), (xm, ym), (x1, y1)], fill=(186, 173, 152, 225), width=2, joint="curve")
+        st_d.line([(x_a1, y_a1), (xm, ym), (x_b1, y_b1)], fill=(235, 227, 210, 255), width=4, joint="curve")
+        st_d.line([(x_a2, y_a2), (xm, ym), (x_b2, y_b2)], fill=(252, 248, 240, 235), width=5, joint="curve")
+        st_d.line([(x_a2 - 1, y_a2 - 1), (xm - 1, ym - 1), (x_b2 - 1, y_b2 - 1)], fill=(255, 253, 248, 200), width=2, joint="curve")
+    comp = Image.alpha_composite(Image.alpha_composite(base.convert("RGBA"), sh_l), st_l)
+    ring_m = Image.new("L", (w, h), 255); ImageDraw.Draw(ring_m).rectangle([18, 18, w - 19, h - 19], fill=0)
+    comp_rgb = Image.composite(Image.new("RGB", (w, h), (239, 233, 219)), comp.convert("RGB"), ring_m.filter(ImageFilter.GaussianBlur(3.8)).point(lambda p: int(p * .62)))
+    am = Image.new("L", (w, h), 0); ad = ImageDraw.Draw(am); poly = []
+    for x in range(13, w - 13, 5): poly.append((x, 14 + rng.randint(-3, 3)))
+    for y in range(13, h - 13, 5): poly.append((w - 15 + rng.randint(-3, 3), y))
+    for x in range(w - 13, 13, -5): poly.append((x, h - 15 + rng.randint(-3, 3)))
+    for y in range(h - 13, 13, -5): poly.append((14 + rng.randint(-3, 3), y))
+    ad.polygon(poly, fill=255)
+    for x0, y0, x1, y1, nx, ny in ((14, 14, w - 14, 14, 0, -1), (w - 15, 14, w - 15, h - 14, 1, 0), (14, h - 15, w - 14, h - 15, 0, 1), (14, 14, 14, h - 14, -1, 0)):
+        steps = abs((x1 - x0) + (y1 - y0)) // 2
+        for k in range(steps):
+            t = k / max(1, steps - 1); px0 = x0 + (x1 - x0) * t; py0 = y0 + (y1 - y0) * t
+            fl = rng.randint(2, 12); ax = nx * fl + rng.uniform(-4.0, 4.0); ay = ny * fl + rng.uniform(-4.0, 4.0)
+            ad.line([(px0 - nx * 2, py0 - ny * 2), (px0 + ax, py0 + ay)], fill=rng.randint(100, 226), width=1 if rng.random() > .25 else 2)
+    out = comp_rgb.convert("RGBA"); out.putalpha(am.filter(ImageFilter.GaussianBlur(.42)))
+    return out
 
 
 def erode(m, r):
@@ -375,6 +509,7 @@ def main():
     pst = standee(pr, 11, 760, False); ok, rt = check_vis(pst)
     if not ok: raise SystemExit(f"错误：道具图为空白（占比 {rt*100:.2f}%）")
     tl, wk, pru = (detect_tree_lights(pst) if xm else None), ({"leftPct":44.6,"topPct":7.5} if xm else detect_wick(pst)), uri(pst, 88, 680)
+    lin_u = uri(make_linen_card(), 78)
 
     rb = {}; bpj = a.blessing or (str(wd / "blessing.json") if wd and (wd / "blessing.json").is_file() else None)
     if bpj and os.path.isfile(bpj):
@@ -402,7 +537,7 @@ def main():
     else:
         cid = hashlib.sha256(f"{ad}|{out_p.resolve()}|{json.dumps(bcfg,ensure_ascii=False,sort_keys=True)}".encode("utf-8")).hexdigest()[:16]
 
-    cfg = {"cardId":cid,"occasion":a.occasion,"fold":a.fold,"coverImageUrl":cov_u,"characterImageUrl":chr_u,"insideLeftUrl":ilu,"insideRightUrl":iru,"cakeTableUrl":pru,"archUrl":aru,"linenImageUrl":"","cakeWickPos":wk,"styleTheme":thm,"blessing":bcfg}
+    cfg = {"cardId":cid,"occasion":a.occasion,"fold":a.fold,"coverImageUrl":cov_u,"characterImageUrl":chr_u,"insideLeftUrl":ilu,"insideRightUrl":iru,"cakeTableUrl":pru,"archUrl":aru,"linenImageUrl":lin_u,"cakeWickPos":wk,"styleTheme":thm,"blessing":bcfg}
     if tl is not None: cfg["treeLights"] = tl
     out_p.parent.mkdir(parents=True, exist_ok=True); out_p.write_text(assemble(cfg), encoding="utf-8")
     print(f"[OK] {'圣诞' if xm else '生日'}立体贺卡（{'4:3上下' if vert else '左右横版'}）-> {out_p} ({out_p.stat().st_size/1024:.1f} KB)")

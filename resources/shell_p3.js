@@ -97,7 +97,8 @@ function renderChristmasTreeLights() {
   });
 }
 renderChristmasTreeLights();
-const usePhotoLinen = false;
+const usePhotoLinen = isRealUrl(cfg.linenImageUrl);
+if (usePhotoLinen) { $('linenBgImg').src = cfg.linenImageUrl; $('linenBgImg').style.display = 'block'; $('linenCssCard').classList.add('has-linen-img'); }
 
 const sparklesEl = $('sparklesLayer');
 [[15,18],[28,12],[46,15],[67,14],[82,20],[12,36],[88,34]].forEach(([x,y],i)=>{ const s=document.createElement('span'); s.className='sd'; s.style.cssText=`left:${x}%;top:${y}%;width:3.5px;height:3.5px;animation-delay:${i*.4}s`; sparklesEl.appendChild(s); });

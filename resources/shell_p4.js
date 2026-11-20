@@ -5,7 +5,7 @@ let blowing = false, blowProgress = 0, blowHoldTimer = null, blowRaf = null, blo
 let supProp = false, supStage = false, supPropT = null, supStageT = null, wishMsg = '';
 let blowBuf = null, blowSrc = null, blowFlt = null, blowGain = null;
 let micActive = false, micPending = false, micDenied = false, micGranted = false, micSid = 0, micTried = false, micLevel = 0, openingBusy = false;
-let micStream = null, micSrc = null, micGain = null, micAna = null, micRaf = null, micCtx = null;
+let micStream = null, micSrc = null, micGain = null, micAna = null, micMute = null, micRaf = null, micCtx = null;
 const liveStreams = new Set();
 
 function getBlowBuf(ctx) {
@@ -59,10 +59,10 @@ function stopAllLiveStreams() { Array.from(liveStreams).forEach((st) => stopTrac
 function stopMicDetector() {
   micSid += 1; micPending = micActive = false; micLevel = 0;
   if (micRaf) { cancelAnimationFrame(micRaf); micRaf = null; }
-  try { if (micSrc) micSrc.disconnect(); if (micGain) micGain.disconnect(); } catch {}
+  try { if (micSrc) micSrc.disconnect(); if (micGain) micGain.disconnect(); if (micAna) micAna.disconnect(); if (micMute) micMute.disconnect(); } catch {}
   stopTracks(micStream); stopAllLiveStreams();
   if (micCtx && micCtx !== mCtx) micCtx.close().catch(() => {});
-  micStream = micSrc = micGain = micAna = micCtx = null;
+  micStream = micSrc = micGain = micAna = micMute = micCtx = null;
   if (musicPlaying && mCtx && mGain) try { mGain.gain.setTargetAtTime(MUSIC_MASTER_GAIN, mCtx.currentTime, .08); } catch {}
   els.micMeterFill.style.width = '4%'; if (!blowing) applyFlameWind(0, 0); syncUI();
 }
@@ -85,7 +85,7 @@ async function requestMicSafe(sid, ms = MIC_TIMEOUT) {
   if (tmr) clearTimeout(tmr);
   return res;
 }
-/** 启动 1024 点高精度宽带低频气流吹气检测（隔离八音盒/嗡声/单音） */
+/** 启动 1024 点宽带频谱平坦度（SFM）吹气检测（兼容手机高通滤波与正常呼气，隔离八音盒/嗡声/单音/人声） */
 async function startMicWithStream(cStream, cCtx) {
   if (cStream) trackStream(cStream);
   if (isChristmas || !isOpen || !candleLit || micActive || micPending) { if (cStream) stopTracks(cStream); return false; }
@@ -98,38 +98,57 @@ async function startMicWithStream(cStream, cCtx) {
     if (ctx.state === 'suspended') await ctx.resume();
     if (sid !== micSid || !isOpen || !candleLit) { stopTracks(stream); if (sid === micSid) micPending = false; return false; }
     micCtx = ctx; micStream = stream; micSrc = ctx.createMediaStreamSource(stream);
-    micGain = ctx.createGain(); micGain.gain.value = 3.2;
-    micAna = ctx.createAnalyser(); micAna.fftSize = 1024; micAna.smoothingTimeConstant = .25;
-    micSrc.connect(micGain); micGain.connect(micAna);
+    micGain = ctx.createGain(); micGain.gain.value = 4.5;
+    micAna = ctx.createAnalyser(); micAna.fftSize = 1024; micAna.smoothingTimeConstant = .22;
+    micMute = ctx.createGain(); micMute.gain.value = 0;
+    micSrc.connect(micGain); micGain.connect(micAna); micAna.connect(micMute); micMute.connect(ctx.destination);
     const sr = ctx.sampleRate || 48000, bh = sr / 1024, tb = micAna.frequencyBinCount;
-    const ls = Math.max(1, Math.floor(70 / bh)), le = Math.min(tb - 1, Math.max(ls + 2, Math.ceil(360 / bh)));
-    const ms0 = le + 1, me = Math.min(tb - 1, Math.max(ms0 + 3, Math.ceil(1350 / bh))), be = Math.min(tb - 1, Math.max(ls + 6, Math.ceil(680 / bh)));
-    const hs = Math.min(tb - 1, Math.floor(1550 / bh)), he = Math.min(tb - 1, Math.max(hs + 2, Math.ceil(3600 / bh)));
-    const tBuf = new Float32Array(1024), fBuf = new Uint8Array(tb), stTs = performance.now();
-    let cal = 0, sR = 0, sL = 0, bR = .012, bL = 18, chg = 0;
+    const ws0 = Math.max(2, Math.floor(120 / bh)), we = Math.min(tb - 1, Math.max(ws0 + 8, Math.ceil(3600 / bh))), wCnt = Math.max(1, we - ws0 + 1);
+    const ms0 = Math.min(we - 4, Math.floor(1450 / bh)), mCnt = Math.max(1, we - ms0 + 1);
+    const tBuf = new Float32Array(1024), fBuf = new Uint8Array(tb), mArr = new Uint8Array(mCnt), stTs = performance.now();
+    let cal = 0, sR = 0, sW = 0, sM = 0, bR = .008, bW = 14, bM = 12, chg = 0;
     micPending = false; micActive = true; syncUI();
     const loop = (now) => {
       if (sid !== micSid || !micActive || !isOpen || !candleLit) return;
       micAna.getFloatTimeDomainData(tBuf); micAna.getByteFrequencyData(fBuf);
-      let sq = 0, lS = 0, mS = 0, hS = 0;
+      let sq = 0, wS = 0, wMx = 0;
       for (let i = 0; i < 1024; i++) sq += tBuf[i] * tBuf[i];
-      for (let i = ls; i <= le; i++) lS += fBuf[i];
-      for (let i = ms0; i <= me; i++) mS += fBuf[i];
-      for (let i = hs; i <= he; i++) hS += fBuf[i];
-      const rms = Math.sqrt(sq / 1024), lA = lS / (le - ls + 1), mA = mS / Math.max(1, me - ms0 + 1), hA = hS / Math.max(1, he - hs + 1);
-      if (now - stTs < 700) { micRaf = requestAnimationFrame(loop); return; }
-      if (cal < 16) { sR += rms; sL += lA; if (++cal === 16) { bR = Math.min(.095, Math.max(.008, sR / 16)); bL = Math.min(115, Math.max(12, sL / 16)); } micRaf = requestAnimationFrame(loop); return; }
-      let mx = 0, tot = 0, act = 0, top2 = 0; const bl = [];
-      for (let i = ls; i <= be; i++) { const v = fBuf[i]; if (v > mx) mx = v; const pw = Math.pow(10, v / 65); bl.push(pw); tot += pw; }
-      const flr = Math.max(24, mx - 42);
-      for (let i = ls; i <= be; i++) if (fBuf[i] >= flr) act++;
-      for (let k = 0; k < bl.length; k++) { const pr = bl[k] + (k + 1 < bl.length ? bl[k + 1] : 0); if (pr > top2) top2 = pr; }
-      const isWind = act / Math.max(1, be - ls + 1) >= .38 && (tot > 0 ? top2 / tot : 1) <= .68 && lA >= mA * .92 && lA >= hA * 1.15;
-      const rT = Math.max(.026, bR * 1.95), lT = Math.max(36, bL * 1.65);
-      if (isWind && rms >= rT && lA >= lT) {
-        const ws = Math.min(1.8, Math.max((rms - bR) / rT, (lA - bL) / lT));
-        micLevel = Math.min(1, ws * .85); chg = Math.min(1, chg + .045 + Math.min(.045, ws * .022));
-      } else { bR = bR * .96 + rms * .04; bL = bL * .96 + lA * .04; micLevel = Math.max(0, micLevel * .72); chg = Math.max(0, chg - .055); }
+      for (let i = ws0; i <= we; i++) { const v = fBuf[i]; wS += v; if (v > wMx) wMx = v; if (i >= ms0) mArr[i - ms0] = v; }
+      const rms = Math.sqrt(sq / 1024), wMean = wS / wCnt;
+      const mSort = Uint8Array.from(mArr).sort();
+      const mP25 = mSort[Math.floor(mCnt * .25)];
+      if (now - stTs < 260) { micRaf = requestAnimationFrame(loop); return; }
+      const wFlr = Math.max(14, wMx - 36);
+      let wAct = 0, totP = 0, sumLogP = 0, p1 = 0, p2 = 0, p3 = 0, mTotP = 0, mSumLogP = 0;
+      for (let i = ws0; i <= we; i++) {
+        const v = fBuf[i], pw = Math.pow(10, (v - 128) / 36.4), lp = Math.log(pw + 1e-12);
+        if (v >= wFlr) wAct++;
+        totP += pw; sumLogP += lp;
+        if (pw >= p1) { p3 = p2; p2 = p1; p1 = pw; } else if (pw >= p2) { p3 = p2; p2 = pw; } else if (pw > p3) { p3 = pw; }
+        if (i >= ms0) { mTotP += pw; mSumLogP += lp; }
+      }
+      const wSpread = wAct / wCnt, peakRatio = totP > 0 ? (p1 + p2 + p3) / totP : 1, sfm = totP > 0 ? Math.exp(sumLogP / wCnt) / (totP / wCnt) : 0;
+      const mSfm = mTotP > 0 ? Math.exp(mSumLogP / mCnt) / (mTotP / mCnt) : 0;
+      if (cal < 10) {
+        if (sfm >= .08 || mSfm >= .14) { cal = 10; }
+        else {
+          sR += rms; sW += wMean; sM += mP25;
+          if (++cal === 10) { bR = Math.min(.015, Math.max(.004, sR / 10)); bW = Math.min(28, Math.max(8, sW / 10)); bM = Math.min(20, Math.max(0, sM / 10)); }
+          micRaf = requestAnimationFrame(loop); return;
+        }
+      }
+      const isPureWind = wSpread >= .20 && peakRatio <= .42 && sfm >= .12 && wMean >= Math.max(18, bW * 1.40);
+      const isFloorWind = mSfm >= .16 && mP25 >= Math.max(48, bM + 32) && wMean >= Math.max(18, bW * 1.35);
+      const isWind = (isPureWind || isFloorWind) && rms >= Math.max(.008, bR * 1.40);
+      if (isWind) {
+        const ws = Math.min(2.0, Math.max((rms - bR) / Math.max(.008, bR * 1.40), (wMean - bW) / Math.max(18, bW * 1.40)));
+        micLevel = Math.min(1, .28 + ws * .62); chg = Math.min(1, chg + .026 + Math.min(.032, ws * .020));
+      } else {
+        const soft = (isPureWind || isFloorWind) && rms >= Math.max(.005, bR * 1.15);
+        if (!soft && wSpread < .22 && sfm < .08 && rms < bR * 1.8) { bR = Math.min(.015, bR * .985 + rms * .015); bW = Math.min(28, bW * .985 + wMean * .015); bM = Math.min(20, bM * .985 + mP25 * .015); }
+        micLevel = soft ? Math.max(micLevel * .78, .22) : Math.max(0, micLevel * .76);
+        chg = Math.max(0, chg - (soft ? .012 : .042));
+      }
       els.micMeterFill.style.width = `${Math.round(Math.max(4, Math.min(100, (chg * .58 + micLevel * .42) * 100)))}%`;
       if (!blowing) applyFlameWind(Math.min(1, Math.max(chg, micLevel * .88)), now);
       if (chg >= 1) { stopMicDetector(); extinguishCandle(); return; }
