@@ -422,8 +422,15 @@
       display: flex; flex-direction: column; justify-content: space-between;
       color: #29231e; font-family: var(--font-hand-zh);
       text-shadow: 0 0.9px 0 rgba(255,252,244,0.78), 0.4px 0.6px 0.8px rgba(32,24,16,0.36);
-      filter: url(#fray-edge-filter); mix-blend-mode: multiply; pointer-events: none;
+      filter: url(#fray-edge-filter); mix-blend-mode: multiply;
+      overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch;
+      touch-action: pan-y; overscroll-behavior: contain; pointer-events: auto;
+      scrollbar-width: thin; scrollbar-color: rgba(90,74,58,0.28) transparent;
     }
+    .embroidered-overlay::-webkit-scrollbar,
+    .linen-body::-webkit-scrollbar { width: 4px; }
+    .embroidered-overlay::-webkit-scrollbar-thumb,
+    .linen-body::-webkit-scrollbar-thumb { background: rgba(90,74,58,0.28); border-radius: 999px; }
 
     /* 无贴图回退时的高仿真 CSS 亚麻布贴 */
     .linen-css-card {
@@ -433,30 +440,43 @@
         repeating-linear-gradient(90deg, rgba(160,146,125,0.08) 0px, rgba(160,146,125,0.08) 1px, transparent 1px, transparent 3px),
         radial-gradient(circle at 40% 35%, #f5efe3 0%, #eae1cf 100%);
       border-radius: 4px; box-shadow: 0 22px 44px rgba(0,0,0,0.6), 0 0 0 2px rgba(244,238,225,0.45);
-      filter: url(#fray-edge-filter); display: none; flex-direction: column;
+      filter: url(#fray-edge-filter); display: none; flex-direction: column; overflow: hidden;
     }
     .linen-css-card.active { display: flex; }
     .linen-stitch-frame {
-      flex: 1; border: 2px dashed #cbbba2; border-radius: 2px; padding: 16px 20px;
-      display: flex; flex-direction: column; justify-content: space-between;
+      flex: 1; min-height: 0; border: 2px dashed #cbbba2; border-radius: 2px; padding: 16px 20px;
+      display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;
       box-shadow: inset 0 0 12px rgba(130,112,86,0.12);
     }
-    .linen-header { display: flex; align-items: center; justify-content: center; gap: 14px; padding-top: 4px; }
+    .linen-header { display: flex; align-items: center; justify-content: center; gap: 14px; padding-top: 4px; flex-shrink: 0; }
     .linen-head-txt { font-family: var(--font-hand-en); font-size: 18px; font-weight: 700; color: #2b241e; line-height: 1.2; letter-spacing: 0.06em; }
     .linen-body {
-      flex: 1; display: flex; flex-direction: column; justify-content: space-between;
+      flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: space-between;
       padding: 12px 4px 6px; color: #29231e; font-family: var(--font-hand-zh);
       text-shadow: 0 0.8px 0 rgba(255,252,244,0.8), 0.4px 0.6px 0.8px rgba(32,24,16,0.32);
+      overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch;
+      touch-action: pan-y; overscroll-behavior: contain;
+      scrollbar-width: thin; scrollbar-color: rgba(90,74,58,0.28) transparent;
     }
 
-    .l-recipient { font-size: clamp(16px, 1.9vw, 19.5px); text-align: left; padding-left: 4%; transform: rotate(-0.8deg); }
-    .l-lines { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: clamp(14px, 1.65vw, 17.5px); line-height: 1.32; text-align: center; }
+    .l-recipient { font-size: clamp(16px, 1.9vw, 19.5px); text-align: left; padding-left: 4%; transform: rotate(-0.8deg); flex-shrink: 0; }
+    .l-lines { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: clamp(14px, 1.65vw, 17.5px); line-height: 1.32; text-align: center; width: 100%; }
+    .l-lines p { max-width: 100%; word-break: break-word; overflow-wrap: anywhere; }
     .l-lines p:nth-child(odd) { transform: rotate(-0.45deg); }
     .l-lines p:nth-child(even) { transform: rotate(0.4deg); }
-    .l-closing { font-size: clamp(15.5px, 1.85vw, 19px); text-align: center; transform: rotate(-0.5deg); }
-    .l-sig { align-self: flex-end; text-align: center; line-height: 1.15; padding-right: 7%; transform: rotate(-1deg); }
+    .l-closing { font-size: clamp(15.5px, 1.85vw, 19px); text-align: center; transform: rotate(-0.5deg); flex-shrink: 0; }
+    .l-sig { align-self: flex-end; text-align: center; line-height: 1.15; padding-right: 7%; transform: rotate(-1deg); flex-shrink: 0; }
     .l-sig-main { font-size: clamp(15px, 1.75vw, 18px); display: block; }
     .l-sig-sub { font-family: var(--font-hand-en); font-size: clamp(13.5px, 1.55vw, 16px); display: block; }
+
+    /* 超长祝福语模式：取消均匀拉伸，改在棉麻刺绣框内部流畅上下滚动，杜绝文字越出布面毛边 */
+    .linen-photo-card.text-scroll .embroidered-overlay,
+    .linen-css-card.text-scroll .linen-body {
+      justify-content: flex-start; gap: 10px; padding-right: 4px;
+    }
+    .linen-photo-card.text-scroll .l-lines p,
+    .linen-css-card.text-scroll .l-lines p { transform: none; }
+    .ed-tip.warn { color: #8c4a26; font-weight: 500; }
 
     @media (max-width: 420px), (max-height: 580px) {
       .embroidered-overlay .l-recipient, .embroidered-overlay .l-closing { font-size: 13px; line-height: 1.18; }
@@ -801,7 +821,7 @@
           <div id="editorBox" class="editor-box">
             <strong style="font-size:15px;flex-shrink:0;">微调刺绣祝福语</strong>
             <div class="editor-fields">
-              <div class="ed-tip">建议正文保持 3~7 行、100 字以内，刺绣留白最美观。</div>
+              <div id="edLineTip" class="ed-tip">建议正文保持 3~7 行、100 字以内，刺绣留白最美观。</div>
               <label class="ed-label">抬头称呼<input id="inRecipient" class="ed-input" /></label>
               <label class="ed-label">祝福正文（每行一句）<textarea id="inLines" rows="5" class="ed-area"></textarea></label>
               <label class="ed-label">结尾祝词<input id="inClosing" class="ed-input" /></label>
@@ -1360,12 +1380,13 @@
       const ACTIVE_SCORE = isChristmas ? CHRISTMAS_SCORE : BIRTHDAY_SCORE;
       const BEAT_MS = isChristmas ? 420 : 560;
 
-      const MUSIC_MASTER_GAIN = 0.84;
-      let mComp = null;
+      const MUSIC_MASTER_GAIN = 0.78;
+      let mComp = null, mOutGain = null;
 
       /**
        * 在用户点击手势同步周期内初始化并唤醒共用 Web Audio 上下文：
-       * 串接 DynamicsCompressorNode 防破音限幅器，使手机 50% 日常音量也能清脆响亮、100% 音量绝不爆音
+       * 串接 DynamicsCompressorNode 防破音限幅器与安全输出余量级（约 -1.8 dBFS），
+       * 使手机 50% 日常音量清脆响亮，100% 满音量叠加吹气音效时依然绝不削波破音
        *
        * @returns {AudioContext | null} 可用的音频上下文
        */
@@ -1376,12 +1397,16 @@
             if (!AC) return null;
             mCtx = new AC();
             mComp = mCtx.createDynamicsCompressor();
-            mComp.threshold.value = -10;
-            mComp.knee.value = 12;
-            mComp.ratio.value = 6;
-            mComp.attack.value = 0.003;
+            mComp.threshold.value = -12;
+            mComp.knee.value = 10;
+            mComp.ratio.value = 8;
+            mComp.attack.value = 0.002;
             mComp.release.value = 0.14;
-            mComp.connect(mCtx.destination);
+
+            mOutGain = mCtx.createGain();
+            mOutGain.gain.value = 0.84;
+            mComp.connect(mOutGain);
+            mOutGain.connect(mCtx.destination);
 
             mGain = mCtx.createGain();
             mGain.gain.value = MUSIC_MASTER_GAIN;
@@ -1491,7 +1516,7 @@
 
       // 高灵敏度麦克风状态、翻开前预授权锁与并发请求防泄漏会话锁
       const MIC_AUTH_TIMEOUT_MS = 5000;
-      let micActive = false, micPending = false, micPermissionDenied = false, micSessionId = 0, micAutoAttempted = false, micLevel = 0;
+      let micActive = false, micPending = false, micPermissionDenied = false, micPermissionGranted = false, micSessionId = 0, micAutoAttempted = false, micLevel = 0;
       let openingInProgress = false;
       let micStream = null, micSource = null, micGainNode = null, micAnalyser = null, micRaf = null, micOwnCtx = null;
 
@@ -1527,7 +1552,7 @@
           filter.type = 'bandpass'; filter.frequency.setValueAtTime(420, now); filter.Q.setValueAtTime(1.6, now);
           const gain = ctx.createGain();
           gain.gain.setValueAtTime(0.0001, now); gain.gain.linearRampToValueAtTime(0.15, now + 0.16);
-          src.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+          src.connect(filter); filter.connect(gain); gain.connect(mComp || ctx.destination);
           src.start(now);
           blowNoiseSrc = src; blowFilter = filter; blowGain = gain;
         } catch {}
@@ -1566,7 +1591,7 @@
             puffFilter.type = 'lowpass'; puffFilter.frequency.setValueAtTime(260, now); puffFilter.frequency.exponentialRampToValueAtTime(90, now + 0.09);
             const puffGain = mCtx.createGain();
             puffGain.gain.setValueAtTime(0.09, now); puffGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
-            puffSrc.connect(puffFilter); puffFilter.connect(puffGain); puffGain.connect(mCtx.destination);
+            puffSrc.connect(puffFilter); puffFilter.connect(puffGain); puffGain.connect(mComp || mCtx.destination);
             puffSrc.start(now); puffSrc.stop(now + 0.1);
           }
         } catch {}
@@ -1683,6 +1708,7 @@
         };
 
         const acquirePromise = doAcquire().then((st) => {
+          if (st) micPermissionGranted = true;
           if (timedOut || session !== micSessionId) {
             stopStreamTracks(st);
             return null;
@@ -2001,17 +2027,24 @@
       } catch {}
 
       /**
-       * 将祝福语内容渲染到手工棉麻毛边刺绣布贴中，并按正文长度与行数自动启用紧凑字号档位
+       * 将祝福语内容渲染到手工棉麻毛边刺绣布贴中：
+       * 1. 按行数与字数自动切换舒适/紧凑字号档位；
+       * 2. 当遇到极端超长文案或窄矮屏幕导致内容超出布面内部安全高度时，自动开启布面内部上下滑动模式（.text-scroll），
+       *    确保所有文字严格留在棉麻毛边内部，绝不截断丢行也不冲出布外。
        */
       function renderBlessing() {
         const lineCount = (blessing.lines || []).length;
         const charCount = (blessing.lines || []).reduce((acc, s) => acc + (s ? s.length : 0), 0);
         const isCompact = lineCount >= 8 || charCount >= 92;
         const isDense = !isCompact && (lineCount >= 6 || charCount >= 64);
+        const preferScroll = lineCount > 8 || charCount > 110;
 
-        [document.getElementById('linenPhotoCard'), document.getElementById('linenCssCard')].forEach((cardEl) => {
+        const photoCard = document.getElementById('linenPhotoCard');
+        const cssCard = document.getElementById('linenCssCard');
+        [photoCard, cssCard].forEach((cardEl) => {
           cardEl.classList.toggle('text-compact', isCompact);
           cardEl.classList.toggle('text-dense', isDense);
+          cardEl.classList.toggle('text-scroll', preferScroll);
         });
 
         ['pView', 'cView'].forEach((prefix) => {
@@ -2021,6 +2054,20 @@
           document.getElementById(prefix + 'Closing').textContent = blessing.closing || '';
           document.getElementById(prefix + 'Sig').textContent = blessing.signature || '';
           document.getElementById(prefix + 'SubSig').textContent = blessing.subSignature || '';
+        });
+
+        // 渲染后按实际像素高度复核是否发生溢出，必要时自动开启内部滚动并复位顶部
+        requestAnimationFrame(() => {
+          const pOv = photoCard.querySelector('.embroidered-overlay');
+          if (pOv) {
+            if (pOv.scrollHeight > pOv.clientHeight + 2) photoCard.classList.add('text-scroll');
+            pOv.scrollTop = 0;
+          }
+          const cOv = cssCard.querySelector('.linen-body');
+          if (cOv) {
+            if (cOv.scrollHeight > cOv.clientHeight + 2) cssCard.classList.add('text-scroll');
+            cOv.scrollTop = 0;
+          }
         });
       }
       renderBlessing();
@@ -2067,8 +2114,10 @@
       /* 9. 交互与防穿模点击命中绑定 */
       /**
        * 翻开或合上贺卡：
-       * 生日模式点击翻开时，先在翻开动画开始之前完成麦克风预授权（最多等待 5 秒防内置浏览器卡死），
-       * 授权或跳过结束后再完整翻开贺卡并从头播放饱满音量的八音盒，彻底不打断惊喜动画。
+       * 1. 首次在生日模式点击翻开时，先在翻开动画开始前完成麦克风预授权（最多等 5 秒超时兜底），
+       *    授权或跳过结束后再完整翻开并播放八音盒，彻底不打断惊喜动画；
+       * 2. 若本页此前已成功获得麦克风授权（micPermissionGranted），合卡后再次翻开时零等待立刻播放展开动画，
+       *    并在后台静默异步重连音轨（保留会话锁与迟到释放机制，确保零泄漏）。
        */
       async function toggleCard() {
         if (openingInProgress) return;
@@ -2083,7 +2132,7 @@
 
         // 在用户点击手势同步周期内先激活 Web Audio，避免后续 await 导致移动端静音
         const audioCtx = ensureAudioCtx();
-        const canPreAuth = (
+        const canUseMic = (
           !isChristmas &&
           candleLit &&
           !micPermissionDenied &&
@@ -2092,8 +2141,17 @@
           typeof navigator.mediaDevices.getUserMedia === 'function'
         );
 
+        // 曾经授权成功过的老访客：合卡再开直接零等待翻开，后台异步重连麦克风
+        if (canUseMic && micPermissionGranted) {
+          isOpen = true;
+          startMusic();
+          syncUI();
+          startMicWithStream(null, audioCtx);
+          return;
+        }
+
         let preStream = null;
-        if (canPreAuth) {
+        if (canUseMic) {
           openingInProgress = true;
           micAutoAttempted = true;
           const preSession = ++micSessionId;
@@ -2232,6 +2290,24 @@
         document.getElementById('letterModal').classList.remove('open');
         setEditorVisible(false);
       };
+      /**
+       * 实时刷新编辑弹窗里的正文行数与字数提醒，超长时明确告知刺绣区将启用布内滑动
+       */
+      function updateEditorLineTip() {
+        const tipEl = document.getElementById('edLineTip');
+        const linesVal = (document.getElementById('inLines').value || '').split('\n').map((s) => s.trim()).filter(Boolean);
+        const totalChars = linesVal.reduce((acc, s) => acc + s.length, 0);
+        if (!tipEl) return;
+        if (linesVal.length > 8 || totalChars > 110) {
+          tipEl.textContent = `当前共 ${linesVal.length} 行 / ${totalChars} 字（超出建议的 7 行 / 100 字），保存后将完整保留全部文字并在刺绣布内支持上下滑动。`;
+          tipEl.classList.add('warn');
+        } else {
+          tipEl.textContent = `当前共 ${linesVal.length} 行 / ${totalChars} 字（建议保持 3~7 行、100 字以内，刺绣留白最美观）。`;
+          tipEl.classList.remove('warn');
+        }
+      }
+      document.getElementById('inLines').addEventListener('input', updateEditorLineTip);
+
       document.getElementById('btnEditToggle').onclick = () => {
         const eb = document.getElementById('editorBox');
         const show = !eb.classList.contains('show');
@@ -2241,6 +2317,7 @@
           document.getElementById('inClosing').value = blessing.closing || '';
           document.getElementById('inSig').value = blessing.signature || '';
           document.getElementById('inSubSig').value = blessing.subSignature || '';
+          updateEditorLineTip();
         }
         setEditorVisible(show);
       };

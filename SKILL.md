@@ -6,13 +6,13 @@ description: >-
   收齐后按两批并行重绘全套同画风插画，并通过 scripts/build_card.py 打包为两段式零穿模单文件 HTML（支持高响度手机八音盒、翻开前预授权吹蜡烛、圣诞常亮闪烁星星灯树与可滑动编辑棉麻刺绣信）。
 ---
 
-# 手绘 3D 立体弹出式节日贺卡 Skill（生日 / 圣诞双主题 · V6 极速定稿版）
+# 手绘 3D 立体弹出式节日贺卡 Skill（生日 / 圣诞双主题 · V7 正式发布版）
 
 ## 不可逾越的 4 条红线
-1. **绝不直接贴参考原图或生活照**：参考图仅用于提取画风，必须从零重绘全新的 `Happy Birthday`（生日）或 `Merry Christmas`（圣诞）封面及全套 5 张插画；画面严格遵循 [references/aesthetic_guidelines.md](./references/aesthetic_guidelines.md)（纸本哑光、60-30-10 配色、留白呼吸感、禁止塑料 3D 光感与荧光色）。
-2. **双主题严格隔离**：生日画无火焰单蜡烛双层蛋糕（`cake_raw.png`）；圣诞**禁止画蛋糕或传 `--cake`**，必须画立体圣诞树（`tree_raw.png`），封面与拱门写 `Merry Christmas` / `MERRY CHRISTMAS`，刺绣信仅用 `embroidery_linen_blank.webp`。
-3. **锁定极简外壳与零 Emoji**：严禁擅改 `resources/card_shell_template.html` 的两段式零穿模引擎、手机 50% 音量高响度八音盒、翻开前预授权逻辑与可滑动编辑弹窗；全页零 Emoji。
-4. **独立工作目录与极速返工**：每张卡使用独立目录（如 `work/xmas_v43_01/`）防串图；若用户后续**只改祝福语**，直接更新 `blessing.json` 复用已有图片重跑 `build_card.py`（1~2 秒出新卡，严禁重画图）。
+1. **绝不直接贴原图**：参考图仅提画风，必须从零重绘全新 `Happy Birthday` / `Merry Christmas` 封面及全套插画（单页内页 5 张，上下拆画 6 张），遵循 [references/aesthetic_guidelines.md](./references/aesthetic_guidelines.md)（哑光纸本、60-30-10 配色、留白呼吸感、禁 3D 塑料光感与荧光色）。
+2. **双主题严格隔离**：生日画无火单蜡烛蛋糕（`cake_raw.png`）；圣诞**禁画蛋糕或传 `--cake`**，须画立体圣诞树（`tree_raw.png`），写 `Merry Christmas` / `MERRY CHRISTMAS`，刺绣信仅用 `embroidery_linen_blank.webp`。
+3. **锁定极简外壳与零 Emoji**：严禁擅改 `resources/card_shell_template.html` 的两段式零穿模引擎、饱满防破音八音盒、翻开前预授权与老访客零等待重开逻辑及可滑动长文刺绣信；全页零 Emoji。
+4. **独立工作目录与极速返工**：每张卡用独立目录（如 `work/xmas_v43_01/`），打包器自动写入独立 `.card_id` 防串词；后续**只改祝福语**时直接改 `blessing.json` 复用原图重跑 `build_card.py`（1~2 秒出新卡，严禁重画图）。
 
 ---
 
@@ -49,8 +49,9 @@ description: >-
    - 左前道具（3:4 纯白底 `#FFFFFF` 平底）：生日画 `cake_raw.png`（无火单蜡烛），圣诞画 `tree_raw.png`（立体圣诞树，顶金星）
 
 ### 路径 B：纯命令行代码型 Agent（无内置生图工具）
-1. 先检查环境：`python scripts/ai_redraw.py --check-env`（未配密钥时引导用户通过 `.env.example` 安全写入本机 `.env`，严禁聊天发明文密钥）。
-2. 运行脚本（脚本已内置两批并行调度与 429 自动重试）：
+1. 先检查环境：`python scripts/ai_redraw.py --check-env`（无需提前安装 Pillow 即可运行；未配密钥时引导用户通过 `.env.example` 安全写入本机 `.env`，严禁聊天发明文密钥）。
+2. 若返回 `pillow_installed: false`，在真正执行重绘前安装依赖：`python -m pip install -r requirements.txt`。
+3. 运行脚本（脚本已内置两批并行调度、全路径 429/5xx 退避重试与安全脱敏）：
    ```bash
    python scripts/ai_redraw.py --occasion birthday --fold vertical --style-ref work/c1/style_ref.jpg --portrait work/c1/portrait.jpg --out-dir work/c1
    ```
@@ -58,13 +59,13 @@ description: >-
 ---
 
 ## 第三步：懒查依赖 -> 审美自检 -> 一键打包交付
-1. **懒加载检查依赖**（已有 Pillow 直接跳过安装）：
+1. **懒加载检查依赖**（已有 Pillow 直接跳过安装，始终用当前 Python 对应的 `python -m pip`）：
    ```bash
-   python -c "import PIL" || pip install -r requirements.txt
+   python -c "import PIL" || python -m pip install -r requirements.txt
    ```
-2. 对照 [references/aesthetic_guidelines.md](./references/aesthetic_guidelines.md) 快速确认五图画风统一、白底干净、零穿帮（单张不达标只重画该张）。
+2. 对照 [references/aesthetic_guidelines.md](./references/aesthetic_guidelines.md) 快速确认全套插画（5 张，或上下双页拆画时 6 张并核查上下内页折线接缝）画风统一、白底干净、零穿帮（单张不达标只重画该张）。
 3. **运行 `scripts/build_card.py` 打包**（按主题改 `--occasion birthday|christmas`，按版式改 `--fold horizontal|vertical`）：
    ```bash
    python scripts/build_card.py --occasion christmas --fold vertical --work-dir work/c1 --style-ref work/c1/style_ref.jpg --strict-redraw-check --output output/card.html
    ```
-4. 交付成品路径与简洁玩法（提醒用户：生日版点封面会先完成麦克风预授权再翻开，在 HTTPS 网页链接可直接对着手机吹灭，本地附件或拒权自动无缝走轻点/长按约 1 秒兜底；点击右前火漆信封展开刺绣信并支持手机上下滑动微调文字）。
+4. 交付成品与玩法（生日版首次点封面先预授权再翻开，已授权后再开零等待；HTTPS 网页可对着手机吹灭，本地附件或拒权自动走轻点/长按约 1 秒兜底；点右前信封看刺绣信并支持手机滑动微调，超长文布内可滚；发给亲友前建议在目标手机/微信实测确认）。

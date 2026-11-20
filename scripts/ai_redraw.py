@@ -13,6 +13,7 @@ AI 视觉画风识别与全套重绘流水线引擎（Birthday Pop-up Card Skill
 
 import argparse
 import base64
+import importlib.util
 import json
 import mimetypes
 import os
@@ -28,7 +29,15 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from PIL import Image
+
+def _require_pillow():
+    """延迟加载 Pillow，保证 --check-env 在尚未安装依赖的干净环境下也能正常运行。"""
+    try:
+        from PIL import Image  # type: ignore
+        return Image
+    except ImportError as exc:
+        err_msg = "缺少图像处理依赖 Pillow，请先运行: python -m pip install -r requirements.txt"
+    raise RuntimeError(err_msg)
 
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
@@ -116,9 +125,14 @@ def check_env_status() -> Dict[str, Any]:
             if ok:
                 preferred = name
                 break
+    try:
+        pillow_ok = importlib.util.find_spec("PIL") is not None
+    except Exception:
+        pillow_ok = False
     return {
         "provider": preferred,
         "ready": any(configured.values()),
+        "pillow_installed": pillow_ok,
         "configured": configured,
     }
 
@@ -127,6 +141,7 @@ def encode_image_b64(img_path: str, max_dim: int = 1280) -> Tuple[str, str]:
     """
     读取本地图片，等比缩放到合理清晰度并返回 (mime_type, base64_str)。
     """
+    Image = _require_pillow()
     img = Image.open(img_path)
     if max(img.size) > max_dim:
         img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
@@ -146,6 +161,112 @@ def encode_image_b64(img_path: str, max_dim: int = 1280) -> Tuple[str, str]:
     return "image/jpeg", b64
 
 
+def _format_safe_http_body(raw_bytes: bytes, limit: int = 220) -> str:
+    """
+    先对完整错误响应正文执行全量脱敏，再提取简短安全提示或按整词边界截断，
+    彻底杜绝在截断边界处切碎密钥导致片段泄露。
+    """
+    if not raw_bytes:
+        return "服务端未返回错误详情"
+    # 先读取较完整正文做全量脱敏，严禁先截 500 字符再替换
+    full_text = raw_bytes[:32768].decode("utf-8", errors="ignore")
+    sanitized_full = sanitize_secret_text(full_text).strip()
+    if not sanitized_full:
+        return "服务端未返回错误详情"
+
+    # 优先提取标准 JSON error.message，减少无关原文暴露
+    summary = ""
+    try:
+        parsed = json.loads(sanitized_full)
+        if isinstance(parsed, dict):
+            err_obj = parsed.get("error")
+            if isinstance(err_obj, dict) and err_obj.get("message"):
+                summary = str(err_obj["message"]).strip()
+            elif parsed.get("message"):
+                summary = str(parsed["message"]).strip()
+    except Exception:
+        pass
+
+    text = summary or sanitized_full
+    if len(text) <= limit:
+        return text
+    # 在截断处回退到最近的空白符，避免把长词切成半截
+    cut = text[:limit]
+    last_space = cut.rfind(" ")
+    if last_space >= limit // 2:
+        cut = cut[:last_space]
+    return cut.rstrip() + "..."
+
+
+def _parse_retry_after(err: urllib.error.HTTPError, default_wait: float) -> float:
+    """读取 HTTP Retry-After 等待秒数并限制在合理上限内，无头信息时使用默认退避时长。"""
+    try:
+        hdr = err.headers.get("Retry-After") if err.headers else None
+        if hdr:
+            val = float(str(hdr).strip())
+            if val >= 0:
+                return min(val, 10.0)
+    except Exception:
+        pass
+    return default_wait
+
+
+def _urlopen_with_retry(
+    url: str,
+    data_bytes: Optional[bytes],
+    headers: Dict[str, str],
+    method: str = "POST",
+    timeout: int = 120,
+    max_retries: int = 2,
+    error_prefix: str = "接口请求失败",
+) -> bytes:
+    """
+    带退避重试（429/502/503/504 与临时网络抖动）和安全脱敏的统一 HTTP 请求器。
+    严格在脱离 except 块之后才抛出清理后的 RuntimeError，使 __cause__ 与 __context__ 均为 None。
+    """
+    ctx = ssl.create_default_context()
+    safe_url = sanitize_secret_text(url.split("?")[0])
+    retry_codes = {429, 502, 503, 504}
+    fatal_error: Optional[str] = None
+
+    for attempt in range(max_retries + 1):
+        req = urllib.request.Request(url, data=data_bytes, headers=headers, method=method)
+        should_retry = False
+        wait_sec = 1.5 * (attempt + 1)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as err:
+            raw_body = b""
+            try:
+                raw_body = err.read()
+            except Exception:
+                pass
+            if err.code in retry_codes and attempt < max_retries:
+                should_retry = True
+                wait_sec = _parse_retry_after(err, 1.5 * (attempt + 1))
+            else:
+                safe_summary = _format_safe_http_body(raw_body)
+                fatal_error = f"{error_prefix} (HTTP {err.code}, {safe_url}): {safe_summary}"
+        except urllib.error.URLError as err:
+            if attempt < max_retries:
+                should_retry = True
+                wait_sec = 1.2 * (attempt + 1)
+            else:
+                fatal_error = f"{error_prefix} (网络连接失败, {safe_url}): {sanitize_secret_text(err.reason)}"
+        except Exception as err:
+            fatal_error = f"{error_prefix} ({safe_url}): {sanitize_secret_text(err)}"
+
+        if should_retry:
+            time.sleep(wait_sec)
+            continue
+        if fatal_error is not None:
+            # 在 except 块外部抛出全新异常，彻底断开原始 HTTPError 的 __context__ 引用
+            raise RuntimeError(fatal_error)
+
+    raise RuntimeError(f"{error_prefix} (重试耗尽, {safe_url})")
+
+
 def http_json_request(
     url: str,
     payload: Optional[Dict[str, Any]] = None,
@@ -157,38 +278,21 @@ def http_json_request(
     """发起标准 HTTP JSON 请求（对 429/502/503/504 限流抖动自动退避重试，异常响应与 URL 统一脱敏）。"""
     req_headers = {"Content-Type": "application/json", **(headers or {})}
     data_bytes = json.dumps(payload).encode("utf-8") if payload is not None else None
-    ctx = ssl.create_default_context()
-    safe_url = sanitize_secret_text(url.split("?")[0])
-    retry_codes = {429, 502, 503, 504}
-
-    for attempt in range(max_retries + 1):
-        req = urllib.request.Request(url, data=data_bytes, headers=req_headers, method=method)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as err:
-            body = ""
-            try:
-                body = err.read().decode("utf-8", errors="ignore")[:500]
-            except Exception:
-                pass
-            if err.code in retry_codes and attempt < max_retries:
-                time.sleep(1.5 * (attempt + 1))
-                continue
-            safe_body = sanitize_secret_text(body)
-            raise RuntimeError(f"HTTP {err.code} 请求失败 ({safe_url}): {safe_body}") from None
-        except urllib.error.URLError as err:
-            if attempt < max_retries:
-                time.sleep(1.2 * (attempt + 1))
-                continue
-            raise RuntimeError(f"网络连接失败 ({safe_url}): {sanitize_secret_text(err.reason)}") from None
-        except Exception as err:
-            raise RuntimeError(f"接口请求异常 ({safe_url}): {sanitize_secret_text(err)}") from None
-    raise RuntimeError(f"接口请求重试耗尽 ({safe_url})")
+    raw = _urlopen_with_retry(
+        url,
+        data_bytes=data_bytes,
+        headers=req_headers,
+        method=method,
+        timeout=timeout,
+        max_retries=max_retries,
+        error_prefix="HTTP 请求失败",
+    )
+    return json.loads(raw.decode("utf-8"))
 
 
 def save_image_from_result(result_ref: str, out_path: str) -> None:
-    """将模型返回的图片 URL 或 base64 DataURI 保存到本地图片文件（异常均脱敏）。"""
+    """将模型返回的图片 URL 或 base64 DataURI 保存到本地图片文件（异常均脱敏且不留原上下文）。"""
+    Image = _require_pillow()
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     if result_ref.startswith("data:image/"):
         _, b64_part = result_ref.split(",", 1)
@@ -197,14 +301,15 @@ def save_image_from_result(result_ref: str, out_path: str) -> None:
         img.save(out_path, "PNG", optimize=True)
         return
 
-    req = urllib.request.Request(result_ref, headers={"User-Agent": "BirthdayPopupCardSkill/1.0"})
-    ctx = ssl.create_default_context()
-    safe_ref = sanitize_secret_text(result_ref.split("?")[0])
-    try:
-        with urllib.request.urlopen(req, timeout=90, context=ctx) as resp:
-            raw = resp.read()
-    except Exception as err:
-        raise RuntimeError(f"下载生成图片失败 ({safe_ref}): {sanitize_secret_text(err)}") from None
+    raw = _urlopen_with_retry(
+        result_ref,
+        data_bytes=None,
+        headers={"User-Agent": "BirthdayPopupCardSkill/1.0"},
+        method="GET",
+        timeout=90,
+        max_retries=2,
+        error_prefix="下载生成图片失败",
+    )
     img = Image.open(BytesIO(raw)).convert("RGB")
     img.save(out_path, "PNG", optimize=True)
 
@@ -394,6 +499,7 @@ def generate_image_dashscope(
         "parameters": {"size": size_str, "watermark": False, "prompt_extend": True},
     }
 
+    mm_fatal: Optional[str] = None
     try:
         res = http_json_request(
             endpoint_mm,
@@ -408,9 +514,12 @@ def generate_image_dashscope(
         if task_id:
             return poll_task(task_id)
     except Exception as mm_err:
+        mm_fatal = sanitize_secret_text(mm_err)
+
+    if mm_fatal is not None:
         # 含参考图的重绘若失败，不再静默丢失参考约束；仅无参考图时才兼容纯异步 t2i
         if ref_images:
-            raise RuntimeError(f"百炼参考图重绘接口失败，为保证画风与人物约束未回退纯文本生图: {sanitize_secret_text(mm_err)}") from None
+            raise RuntimeError(f"百炼参考图重绘接口失败，为保证画风与人物约束未回退纯文本生图: {mm_fatal}")
         fallback_model = os.environ.get("DASHSCOPE_T2I_FALLBACK_MODEL", "wanx2.1-t2i-turbo")
         endpoint_t2i = f"{base_url}/api/v1/services/aigc/text2image/image-synthesis"
         payload_t2i = {
@@ -418,6 +527,7 @@ def generate_image_dashscope(
             "input": {"prompt": prompt},
             "parameters": {"size": size_str, "n": 1},
         }
+        fb_fatal: Optional[str] = None
         try:
             res2 = http_json_request(
                 endpoint_t2i,
@@ -432,9 +542,9 @@ def generate_image_dashscope(
             if img_url2:
                 return img_url2
         except Exception as fb_err:
-            raise RuntimeError(
-                f"百炼生图均未成功。主接口: {sanitize_secret_text(mm_err)}; 回退接口: {sanitize_secret_text(fb_err)}"
-            ) from None
+            fb_fatal = sanitize_secret_text(fb_err)
+        if fb_fatal is not None:
+            raise RuntimeError(f"百炼生图均未成功。主接口: {mm_fatal}; 回退接口: {fb_fatal}")
 
     raise RuntimeError("未能从 DashScope 响应中解析出生成图片")
 
@@ -480,12 +590,40 @@ def _map_openai_size(size_str: str) -> str:
     return "1024x1024"
 
 
+def _append_openai_safe_margin_prompt(prompt: str, size_str: str, oa_size: str) -> str:
+    """
+    OpenAI 仅支持 3:2 (1536x1024) / 2:3 (1024x1536) / 1:1 画幅。
+    当贺卡需要 4:3 或 3:4 画面时，在提示词中要求四周留出纯净安全边距，避免后期适配 4:3/3:4 时切到题字或边缘景物。
+    """
+    m = re.match(r"^\s*(\d+)\s*[*xX]\s*(\d+)\s*$", size_str or "")
+    if not m:
+        return prompt
+    w_val, h_val = int(m.group(1)), int(m.group(2))
+    if w_val <= 0 or h_val <= 0:
+        return prompt
+    target_ratio = w_val / float(h_val)
+    if oa_size == "1536x1024" and abs(target_ratio - 1.5) > 0.08:
+        return (
+            f"{prompt} COMPOSITION SAFE ZONE: Keep all lettering, focal scenery, and key border motifs "
+            f"strictly inside the central 4:3 safe area, leaving at least 10% calm plain paper/background margin "
+            f"on both far left and far right edges so trimming to 4:3 never cuts off important content."
+        )
+    if oa_size == "1024x1536" and abs(target_ratio - (2.0 / 3.0)) > 0.06:
+        return (
+            f"{prompt} COMPOSITION SAFE ZONE: Keep all lettering, focal scenery, and key border motifs "
+            f"strictly inside the central 3:4 safe area, leaving at least 10% calm plain paper/background margin "
+            f"on both top and bottom edges so trimming to 3:4 never cuts off important content."
+        )
+    return prompt
+
+
 def generate_image_openai(prompt: str, ref_images: List[str], size_str: str) -> str:
-    """调用 OpenAI 兼容图像生成/编辑接口（含参考图编辑严格报错保护及异常响应脱敏）。"""
+    """调用 OpenAI 兼容图像生成/编辑接口（含统一退避重试、4:3/3:4 安全边距提示、参考图约束保护及完全脱敏）。"""
     api_key = os.environ["OPENAI_API_KEY"]
     base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     model = os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-1")
     oa_size = _map_openai_size(size_str)
+    safe_prompt = _append_openai_safe_margin_prompt(prompt, size_str, oa_size)
 
     if ref_images:
         # 构造 multipart/form-data 调用 /images/edits 传入参考图
@@ -496,7 +634,7 @@ def generate_image_openai(prompt: str, ref_images: List[str], size_str: str) -> 
             chunks.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{val}\r\n".encode("utf-8"))
 
         add_field("model", model)
-        add_field("prompt", prompt)
+        add_field("prompt", safe_prompt)
         add_field("size", oa_size)
 
         for idx, path in enumerate(ref_images):
@@ -515,41 +653,27 @@ def generate_image_openai(prompt: str, ref_images: List[str], size_str: str) -> 
         chunks.append(f"--{boundary}--\r\n".encode("utf-8"))
         body = b"".join(chunks)
 
-        req = urllib.request.Request(
+        raw = _urlopen_with_retry(
             f"{base_url}/images/edits",
-            data=body,
+            data_bytes=body,
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": f"multipart/form-data; boundary={boundary}",
             },
             method="POST",
+            timeout=150,
+            max_retries=2,
+            error_prefix="OpenAI 参考图重绘接口 (/images/edits) 失败，为保证画风与人物参考约束未回退纯文本生图",
         )
-        try:
-            with urllib.request.urlopen(req, timeout=150) as resp:
-                res = json.loads(resp.read().decode("utf-8"))
-                item = res["data"][0]
-                if item.get("b64_json"):
-                    return f"data:image/png;base64,{item['b64_json']}"
-                return item["url"]
-        except urllib.error.HTTPError as err:
-            err_body = ""
-            try:
-                err_body = err.read().decode("utf-8", errors="ignore")[:500]
-            except Exception:
-                pass
-            raise RuntimeError(
-                f"OpenAI 参考图重绘接口 (/images/edits) 返回 HTTP {err.code}，"
-                f"为保证画风与人物参考约束未回退纯文本生图: {sanitize_secret_text(err_body)}"
-            ) from None
-        except Exception as err:
-            raise RuntimeError(
-                f"OpenAI 参考图重绘接口 (/images/edits) 失败，"
-                f"为保证画风与人物参考约束未回退纯文本生图: {sanitize_secret_text(err)}"
-            ) from None
+        res = json.loads(raw.decode("utf-8"))
+        item = res["data"][0]
+        if item.get("b64_json"):
+            return f"data:image/png;base64,{item['b64_json']}"
+        return item["url"]
 
     res = http_json_request(
         f"{base_url}/images/generations",
-        payload={"model": model, "prompt": prompt, "size": oa_size},
+        payload={"model": model, "prompt": safe_prompt, "size": oa_size},
         headers={"Authorization": f"Bearer {api_key}"},
         timeout=150,
     )

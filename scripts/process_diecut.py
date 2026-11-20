@@ -647,7 +647,12 @@ def align_arch_feet(img: Image.Image) -> Image.Image:
 
 
 def fit_cover_surface(cover_path: str, size: Tuple[int, int] = (750, 1000)) -> Image.Image:
-    """将重绘好的封面或内页图等比居中裁切贴合为标准尺寸，并在遇到极端长宽比时发出安全区提醒。"""
+    """
+    将重绘好的封面或内页图贴合为标准尺寸：
+    - 常规相近比例（<= 1.45x）：等比居中满幅铺纸，避免留黑边；
+    - 极端宽窄比例（> 1.45x，如超宽长条或超窄竖条）：自动切换为完整画面保边模式，
+      以原图边缘采样的柔和纸底色自然补白，绝不裁掉画面两端重要信息或标题，并打印重画建议。
+    """
     img = Image.open(cover_path).convert("RGB")
     sw, sh = img.size
     dw, dh = size
@@ -655,10 +660,37 @@ def fit_cover_surface(cover_path: str, size: Tuple[int, int] = (750, 1000)) -> I
         src_r = sw / float(sh)
         dst_r = dw / float(dh)
         ratio_diff = max(src_r / dst_r, dst_r / src_r)
-        if ratio_diff > 1.35:
+        if ratio_diff > 1.45:
             print(
-                f"[提示] 图片 '{os.path.basename(cover_path)}' 原比例 ({sw}x{sh}) 与目标比例 ({dw}x{dh}) 差异较大（{ratio_diff:.2f}x），"
-                f"已自动居中裁切以防变形，边缘装饰或题字若被裁切请按目标比例重新生成。",
+                f"[提示] 图片 '{os.path.basename(cover_path)}' 原比例 ({sw}x{sh}) 与目标比例 ({dw}x{dh}) 差异较大（极端比例 {ratio_diff:.2f}x），"
+                f"已自动切换为完整画面保边扩纸底模式以防裁切丢失边缘内容；如需满幅铺纸请按目标比例重新生成。",
+                file=sys.stderr,
+            )
+            # 采样图片四边均值作为温和手绘纸底色，使保边留白自然融合
+            px = img.load()
+            samples = []
+            step_x = max(1, sw // 24)
+            step_y = max(1, sh // 24)
+            for x in range(0, sw, step_x):
+                samples.append(px[x, 0])
+                samples.append(px[x, sh - 1])
+            for y in range(0, sh, step_y):
+                samples.append(px[0, y])
+                samples.append(px[sw - 1, y])
+            if samples:
+                bg_color = tuple(int(sum(c[i] for c in samples) / len(samples)) for i in range(3))
+            else:
+                bg_color = (246, 241, 232)
+            canvas = Image.new("RGB", size, bg_color)
+            contained = ImageOps.contain(img, size, Image.Resampling.LANCZOS)
+            offset_x = (dw - contained.width) // 2
+            offset_y = (dh - contained.height) // 2
+            canvas.paste(contained, (offset_x, offset_y))
+            return canvas
+        if ratio_diff > 1.08:
+            print(
+                f"[提示] 图片 '{os.path.basename(cover_path)}' 原比例 ({sw}x{sh}) 与目标比例 ({dw}x{dh}) 略有差异（{ratio_diff:.2f}x），"
+                f"已等比居中贴合；若边缘装饰或题字靠近画幅最外缘，建议生成时留足安全边距。",
                 file=sys.stderr,
             )
     return ImageOps.fit(img, size, Image.Resampling.LANCZOS)

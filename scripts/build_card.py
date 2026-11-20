@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -121,11 +122,10 @@ def normalize_blessing(raw: Dict[str, Any], occasion: str = "birthday") -> Dict[
     total_chars = sum(len(x) for x in lines)
     if len(lines) > 8 or total_chars > 110:
         print(
-            f"[提示] 当前祝福语正文共 {len(lines)} 行 / {total_chars} 字，已启用紧凑刺绣排版并保留前 8 行；"
-            f"为获得最佳棉麻布面留白效果，建议精简在 3~7 行、100 字以内。",
+            f"[提示] 当前祝福语正文共 {len(lines)} 行 / {total_chars} 字，已完整保留全部内容并启用刺绣布面内部可滚动排版；"
+            f"如需一屏完整展示并保留最佳棉麻留白，建议精简在 3~7 行、100 字以内。",
             file=sys.stderr,
         )
-        lines = lines[:8]
 
     default_closing = "圣诞快乐，冬日安暖！" if is_christmas else "生日快乐！"
     closing = str(raw.get("closing") or default_closing).strip()
@@ -180,6 +180,7 @@ def main() -> None:
     parser.add_argument("--sub-signature", help="直接传入副署名或日期（覆盖 JSON）")
     parser.add_argument("--save-processed", action="store_true", help="同时将抠图裁边后的 PNG 存一份到 work/processed 方便查看")
     parser.add_argument("--strict-redraw-check", action="store_true", help="严格检查模式：若封面与参考原图高度雷同则拒绝打包")
+    parser.add_argument("--card-id", help="可选：显式指定该贺卡的唯一隔离编号（用于跨构建复用本地祝福语存档）")
     parser.add_argument("--output", required=True, help="最终输出的单文件 HTML 路径")
 
     args = parser.parse_args()
@@ -367,15 +368,54 @@ def main() -> None:
     except ValueError as err:
         raise SystemExit(f"错误：祝福语数据格式无效：{err}")
 
-    id_seed = "|".join([
+    # 计算全套素材（封面、人物、左右/上下内页、蛋糕/圣诞树、拱门）的完整内容指纹
+    assets_hasher = hashlib.sha256()
+    for part in (
         args.occasion,
         args.fold,
-        Path(args.output).name,
-        cover_uri[:256],
-        char_uri[:256],
-        json.dumps(blessing_cfg, ensure_ascii=False, sort_keys=True),
-    ])
-    card_id = hashlib.sha256(id_seed.encode("utf-8")).hexdigest()[:12]
+        cover_uri,
+        char_uri,
+        inside_left_uri,
+        inside_right_uri,
+        cake_uri,
+        arch_uri,
+    ):
+        assets_hasher.update(part.encode("utf-8"))
+        assets_hasher.update(b"|")
+    assets_digest = assets_hasher.hexdigest()
+
+    out_path = Path(args.output)
+    explicit_id = (args.card_id or "").strip()
+    if explicit_id:
+        logical_id = re.sub(r"[^A-Za-z0-9_-]", "", explicit_id)[:24] or uuid.uuid4().hex[:12]
+        card_id = logical_id
+    elif work_dir is not None:
+        work_dir.mkdir(parents=True, exist_ok=True)
+        card_id_file = work_dir / ".card_id"
+        logical_id = ""
+        if card_id_file.is_file():
+            try:
+                logical_id = re.sub(r"[^A-Za-z0-9_-]", "", card_id_file.read_text(encoding="utf-8").strip())[:24]
+            except OSError:
+                logical_id = ""
+        if not logical_id:
+            logical_id = uuid.uuid4().hex[:12]
+            try:
+                card_id_file.write_text(logical_id, encoding="utf-8")
+            except OSError:
+                pass
+        # 结合该卡专属持久化随机 ID 与全套素材完整哈希：
+        # 同工作目录同套图仅改文案重打时复用原 ID；更换任意素材或新建目录均自动分配全新独立 ID
+        card_id = hashlib.sha256(f"{logical_id}|{assets_digest}".encode("utf-8")).hexdigest()[:16]
+    else:
+        # 未指定工作目录时，纳入完整输出绝对路径（含所在目录）+ 全套素材完整哈希 + 初始祝福，彻底避免同站不同目录同名卡串词
+        resolved_out = str(out_path.resolve())
+        id_seed = "|".join([
+            assets_digest,
+            resolved_out,
+            json.dumps(blessing_cfg, ensure_ascii=False, sort_keys=True),
+        ])
+        card_id = hashlib.sha256(id_seed.encode("utf-8")).hexdigest()[:16]
 
     card_config: Dict[str, Any] = {
         "cardId": card_id,
@@ -411,7 +451,6 @@ def main() -> None:
         count=1,
     )
 
-    out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(final_html, encoding="utf-8")
 
