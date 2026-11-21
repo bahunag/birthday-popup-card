@@ -85,7 +85,7 @@ async function requestMicSafe(sid, ms = MIC_TIMEOUT) {
   if (tmr) clearTimeout(tmr);
   return res;
 }
-/** 启动 1024 点宽带频谱平坦度（SFM）吹气检测（兼容手机高通滤波与正常呼气，隔离八音盒/嗡声/单音/人声） */
+/** 启动四频带声学吹气检测（含环境基线真实校准、时间步长积分、防高通/偏低频漏灭及抗风扇/道路/音乐/人声干扰） */
 async function startMicWithStream(cStream, cCtx) {
   if (cStream) trackStream(cStream);
   if (isChristmas || !isOpen || !candleLit || micActive || micPending) { if (cStream) stopTracks(cStream); return false; }
@@ -103,51 +103,75 @@ async function startMicWithStream(cStream, cCtx) {
     micMute = ctx.createGain(); micMute.gain.value = 0;
     micSrc.connect(micGain); micGain.connect(micAna); micAna.connect(micMute); micMute.connect(ctx.destination);
     const sr = ctx.sampleRate || 48000, bh = sr / 1024, tb = micAna.frequencyBinCount;
-    const ws0 = Math.max(2, Math.floor(120 / bh)), we = Math.min(tb - 1, Math.max(ws0 + 8, Math.ceil(3600 / bh))), wCnt = Math.max(1, we - ws0 + 1);
-    const ms0 = Math.min(we - 4, Math.floor(1450 / bh)), mCnt = Math.max(1, we - ms0 + 1);
+    const ss0 = Math.max(1, Math.floor(50 / bh)), se = Math.min(tb - 1, Math.max(ss0 + 2, Math.ceil(260 / bh)));
+    const ls0 = Math.max(2, Math.floor(90 / bh)), le = Math.min(tb - 1, Math.max(ls0 + 6, Math.ceil(650 / bh)));
+    const hs0 = Math.max(le + 1, Math.floor(1000 / bh)), he = Math.min(tb - 1, Math.max(hs0 + 10, Math.ceil(3600 / bh)));
+    const ms0 = Math.min(he - 4, Math.floor(1500 / bh)), mCnt = Math.max(1, he - ms0 + 1);
+    const us0 = Math.min(tb - 6, Math.max(he + 1, Math.floor(4000 / bh))), ue = Math.min(tb - 1, Math.max(us0 + 4, Math.ceil(12000 / bh)));
     const tBuf = new Float32Array(1024), fBuf = new Uint8Array(tb), mArr = new Uint8Array(mCnt), stTs = performance.now();
-    let cal = 0, sR = 0, sW = 0, sM = 0, bR = .008, bW = 14, bM = 12, chg = 0;
+    let calMs = 0, calDone = false, lastTs = 0, sR = 0, sS = 0, sL = 0, sH = 0, sM = 0, sU = 0;
+    let bR = .008, bS = 14, bL = 16, bH = 14, bM = 12, bU = 8, chg = 0;
+    /** 计算指定频段均值、覆盖率、频谱平坦度与前 K 峰值能量占比 */
+    const bandStats = (lo, hi, floorDrop, floorMin, topK) => {
+      const cnt = Math.max(1, hi - lo + 1); let sum = 0, mx = 0;
+      for (let i = lo; i <= hi; i++) { const v = fBuf[i]; sum += v; if (v > mx) mx = v; }
+      const flr = Math.max(floorMin, mx - floorDrop); let act = 0, totP = 0, sumLogP = 0, p1 = 0, p2 = 0, p3 = 0;
+      for (let i = lo; i <= hi; i++) {
+        const v = fBuf[i], pw = Math.pow(10, (v - 128) / 36.4);
+        if (v >= flr) act++;
+        totP += pw; sumLogP += Math.log(pw + 1e-12);
+        if (pw >= p1) { p3 = p2; p2 = p1; p1 = pw; } else if (pw >= p2) { p3 = p2; p2 = pw; } else if (pw > p3) { p3 = pw; }
+      }
+      const pk = topK <= 2 ? (p1 + p2) : (p1 + p2 + p3);
+      return { mean: sum / cnt, spread: act / cnt, sfm: totP > 0 ? Math.exp(sumLogP / cnt) / (totP / cnt) : 0, peakRatio: totP > 0 ? pk / totP : 1 };
+    };
     micPending = false; micActive = true; syncUI();
     const loop = (now) => {
       if (sid !== micSid || !micActive || !isOpen || !candleLit) return;
+      const dt = lastTs ? Math.min(.08, Math.max(.004, (now - lastTs) / 1000)) : .016; lastTs = now;
       micAna.getFloatTimeDomainData(tBuf); micAna.getByteFrequencyData(fBuf);
-      let sq = 0, wS = 0, wMx = 0;
+      if (now - stTs < 240) { micRaf = requestAnimationFrame(loop); return; }
+      let sq = 0, mSum = 0;
       for (let i = 0; i < 1024; i++) sq += tBuf[i] * tBuf[i];
-      for (let i = ws0; i <= we; i++) { const v = fBuf[i]; wS += v; if (v > wMx) wMx = v; if (i >= ms0) mArr[i - ms0] = v; }
-      const rms = Math.sqrt(sq / 1024), wMean = wS / wCnt;
-      const mSort = Uint8Array.from(mArr).sort();
-      const mP25 = mSort[Math.floor(mCnt * .25)];
-      if (now - stTs < 260) { micRaf = requestAnimationFrame(loop); return; }
-      const wFlr = Math.max(14, wMx - 36);
-      let wAct = 0, totP = 0, sumLogP = 0, p1 = 0, p2 = 0, p3 = 0, mTotP = 0, mSumLogP = 0;
-      for (let i = ws0; i <= we; i++) {
-        const v = fBuf[i], pw = Math.pow(10, (v - 128) / 36.4), lp = Math.log(pw + 1e-12);
-        if (v >= wFlr) wAct++;
-        totP += pw; sumLogP += lp;
-        if (pw >= p1) { p3 = p2; p2 = p1; p1 = pw; } else if (pw >= p2) { p3 = p2; p2 = pw; } else if (pw > p3) { p3 = pw; }
-        if (i >= ms0) { mTotP += pw; mSumLogP += lp; }
-      }
-      const wSpread = wAct / wCnt, peakRatio = totP > 0 ? (p1 + p2 + p3) / totP : 1, sfm = totP > 0 ? Math.exp(sumLogP / wCnt) / (totP / wCnt) : 0;
-      const mSfm = mTotP > 0 ? Math.exp(mSumLogP / mCnt) / (mTotP / mCnt) : 0;
-      if (cal < 10) {
-        if (sfm >= .08 || mSfm >= .14) { cal = 10; }
-        else {
-          sR += rms; sW += wMean; sM += mP25;
-          if (++cal === 10) { bR = Math.min(.015, Math.max(.004, sR / 10)); bW = Math.min(28, Math.max(8, sW / 10)); bM = Math.min(20, Math.max(0, sM / 10)); }
+      for (let i = ms0; i <= he; i++) { const v = fBuf[i]; mSum += v; mArr[i - ms0] = v; }
+      const rms = Math.sqrt(sq / 1024), mMean = mSum / mCnt;
+      const mSort = Uint8Array.from(mArr).sort(), mP25 = mSort[Math.floor(mCnt * .25)];
+      const S = bandStats(ss0, se, 32, 14, 2), L = bandStats(ls0, le, 32, 16, 2), H = bandStats(hs0, he, 34, 14, 3), M = bandStats(ms0, he, 36, 14, 3), U = bandStats(us0, ue, 34, 14, 3);
+      if (!calDone) {
+        const instantHiBlow = H.mean >= 90 && (H.mean - S.mean >= 18 || U.mean >= 42) && H.sfm >= .42 && H.peakRatio <= .32 && mMean >= 70;
+        const instantLoBlow = L.mean >= 100 && L.sfm >= .28 && L.peakRatio <= .48 && L.spread >= .45 && mMean < 18 && H.mean < 24;
+        if (instantHiBlow || instantLoBlow) {
+          calDone = true;
+        } else {
+          calMs += dt * 1000; sR += rms * dt; sS += S.mean * dt; sL += L.mean * dt; sH += H.mean * dt; sM += mP25 * dt; sU += U.mean * dt;
+          if (calMs >= 460) {
+            const sec = calMs / 1000; calDone = true;
+            bR = Math.max(.004, sR / sec); bS = Math.max(8, sS / sec); bL = Math.max(8, sL / sec); bH = Math.max(8, sH / sec); bM = Math.max(0, sM / sec); bU = Math.max(4, sU / sec);
+          }
           micRaf = requestAnimationFrame(loop); return;
         }
       }
-      const isPureWind = wSpread >= .20 && peakRatio <= .42 && sfm >= .12 && wMean >= Math.max(18, bW * 1.40);
-      const isFloorWind = mSfm >= .16 && mP25 >= Math.max(48, bM + 32) && wMean >= Math.max(18, bW * 1.35);
-      const isWind = (isPureWind || isFloorWind) && rms >= Math.max(.008, bR * 1.40);
+      const hasClearAir = H.sfm >= .42 && U.mean >= Math.max(36, bU + 22);
+      const isFullFlatRumble = !hasClearAir && (S.mean >= H.mean - 4) && (S.mean >= Math.max(24, bS + 14)) && (mMean >= Math.max(22, bM + 10));
+      const hClean = H.spread >= .25 && H.peakRatio <= .42 && H.sfm >= .14;
+      const hFloor = M.sfm >= .16 && mP25 >= Math.max(46, bM + 24);
+      const isHighBlow = !isFullFlatRumble && (hClean || hFloor || hasClearAir) && H.mean >= Math.max(20, bH + 14, bH * 1.38) && rms >= Math.max(.008, bR * 1.45);
+      const isLowShape = !isFullFlatRumble && L.sfm >= .28 && L.peakRatio <= .48 && L.spread >= .45 && (L.mean - mMean) >= 24 && mMean < 24 && mP25 < 46;
+      const isLowBlow = isLowShape && L.mean >= Math.max(24, bL + 16, bL * 1.45) && rms >= Math.max(.010, bR * 1.50);
+      const isWind = isHighBlow || isLowBlow;
       if (isWind) {
-        const ws = Math.min(2.0, Math.max((rms - bR) / Math.max(.008, bR * 1.40), (wMean - bW) / Math.max(18, bW * 1.40)));
-        micLevel = Math.min(1, .28 + ws * .62); chg = Math.min(1, chg + .026 + Math.min(.032, ws * .020));
+        const excessD = isHighBlow ? (H.mean - bH) : (L.mean - bL);
+        const ws = Math.min(2.0, Math.max((rms - bR) / Math.max(.008, bR * 1.4), excessD / 24));
+        micLevel = Math.min(1, .28 + ws * .62); chg = Math.min(1, chg + dt * (1.26 + Math.min(.44, ws * .26)));
       } else {
-        const soft = (isPureWind || isFloorWind) && rms >= Math.max(.005, bR * 1.15);
-        if (!soft && wSpread < .22 && sfm < .08 && rms < bR * 1.8) { bR = Math.min(.015, bR * .985 + rms * .015); bW = Math.min(28, bW * .985 + wMean * .015); bM = Math.min(20, bM * .985 + mP25 * .015); }
-        micLevel = soft ? Math.max(micLevel * .78, .22) : Math.max(0, micLevel * .76);
-        chg = Math.max(0, chg - (soft ? .012 : .042));
+        const soft = !isFullFlatRumble && (hClean || hFloor || isLowShape || hasClearAir) && rms >= Math.max(.005, bR * 1.15) && (H.mean >= bH + 7 || L.mean >= bL + 8);
+        if (isFullFlatRumble) {
+          const al = Math.min(.10, dt * 1.4); bR = bR * (1 - al) + rms * al; bS = bS * (1 - al) + S.mean * al; bL = bL * (1 - al) + L.mean * al; bH = bH * (1 - al) + H.mean * al; bM = bM * (1 - al) + mP25 * al; bU = bU * (1 - al) + U.mean * al;
+        } else if (!soft && rms < Math.max(.08, bR * 3.5)) {
+          const al = Math.min(.04, dt * .45); bR = bR * (1 - al) + rms * al; bS = bS * (1 - al) + S.mean * al; bL = bL * (1 - al) + L.mean * al; bH = bH * (1 - al) + H.mean * al; bM = bM * (1 - al) + mP25 * al; bU = bU * (1 - al) + U.mean * al;
+        }
+        micLevel = soft ? Math.max(micLevel * .78, .22) : Math.max(0, micLevel * Math.pow(.08, dt * 3.5));
+        chg = Math.max(0, chg - dt * (soft ? .42 : 1.55));
       }
       els.micMeterFill.style.width = `${Math.round(Math.max(4, Math.min(100, (chg * .58 + micLevel * .42) * 100)))}%`;
       if (!blowing) applyFlameWind(Math.min(1, Math.max(chg, micLevel * .88)), now);

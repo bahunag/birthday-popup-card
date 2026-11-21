@@ -1,4 +1,4 @@
-"""立体贺卡纯本地刀模抠图与正宗母版拼接器（V8.3 实拍级 3D 高度场棉麻云端保真版，仅依赖 Pillow，零联网零密钥）"""
+"""立体贺卡纯本地刀模抠图与正宗母版拼接器（V8.4 全闭环高保真版，仅依赖 Pillow，零联网零密钥）"""
 import argparse, base64, colorsys, hashlib, io, json, math, os, random, re, sys, uuid
 from collections import deque
 from pathlib import Path
@@ -130,13 +130,18 @@ def align_feet(img):
 
 
 def detect_wick(rgba):
-    """结合竖直细柱追踪与底座实心度评分定位蛋糕单蜡烛芯（抵御上方误画花环/拱门干扰并兼容 3px 细芯）。"""
+    """结合竖直细柱追踪、防纸边过滤与连续底座实心校验定位单蜡烛芯；无可靠蜡烛时返回 None 避免误亮火苗。"""
     w, h = rgba.size; px = rgba.load()
-    def is_fg(x, y): r, g, b, a = px[x, y]; return a > 200 and (min(r, g, b) < 232 or max(r, g, b) - min(r, g, b) > 16)
-    max_sw = max(20, int(w * .095)); max_cx_drift = max(5, int(w * .02)); min_ch = max(9, int(h * .028))
+    def is_fg(x, y):
+        r, g, b, a = px[x, y]
+        if a <= 200: return False
+        # 剔除 300g 米白刀模卡纸底边与浅灰阴影环，保留彩色及浅粉细蜡烛
+        if r >= g >= b and min(r, g, b) >= 184 and (r - b) <= 32: return False
+        return min(r, g, b) < 232 or (max(r, g, b) - min(r, g, b)) > 16
+    max_sw = max(18, int(w * .085)); max_cx_drift = max(5, int(w * .02)); min_ch = max(8, int(h * .025))
     chains, active = [], []
-    x0_scan, x1_scan = int(w * .18), int(w * .82)
-    for y in range(int(h * .02), int(h * .48)):
+    x0_scan, x1_scan = int(w * .24), int(w * .76)
+    for y in range(int(h * .02), int(h * .46)):
         segs = []; on = False; s0 = 0
         for x in range(x0_scan, x1_scan):
             if is_fg(x, y):
@@ -153,7 +158,7 @@ def detect_wick(rgba):
         for ch in active:
             ly, lcx, lw = ch[-1][0], ch[-1][3], ch[-1][4]
             if y - ly > 3:
-                if ch[-1][0] - ch[0][0] + 1 >= min_ch and len(ch) >= 7: chains.append(ch)
+                if ch[-1][0] - ch[0][0] + 1 >= min_ch and len(ch) >= 6: chains.append(ch)
                 continue
             cand = [(abs(cx - lcx), idx, (y, a0, a1, cx, wd)) for idx, (a0, a1, cx, wd) in enumerate(narrows)
                     if idx not in used and abs(cx - lcx) <= max_cx_drift and wd <= lw * 2.3 + 5]
@@ -164,238 +169,248 @@ def detect_wick(rgba):
             if idx not in used: next_act.append([(y, a0, a1, cx, wd)])
         active = next_act
     for ch in active:
-        if ch[-1][0] - ch[0][0] + 1 >= min_ch and len(ch) >= 7: chains.append(ch)
+        if ch[-1][0] - ch[0][0] + 1 >= min_ch and len(ch) >= 6: chains.append(ch)
     if chains:
         best_score, best_pt = -1e9, None
-        base_min_w = max(22, int(w * .12))
+        span_side = max(14, int(w * .055)); min_side = max(7, int(w * .025)); gap_rows = max(24, int(h * .12))
         for ch in chains:
             y0, y1 = ch[0][0], ch[-1][0]; ch_h = y1 - y0 + 1
             avg_x = sum(p[3] for p in ch[:6]) / min(6, len(ch)); avg_w = sum(p[4] for p in ch) / len(ch)
             base_cx = ch[-1][3]
-            center_score = 3.0 * (1.0 - abs(avg_x / w - .5) * 1.8)
-            slim_score = min(4.5, ch_h / max(2.2, avg_w))
-            has_cake_base = False; gap_void = 0; gap_rows = max(12, int(h * .035))
+            if not (w * .26 <= avg_x <= w * .74): continue
+            if abs(base_cx - ch[0][3]) > max(8, int(w * .045)): continue
+            # 确认顶端点邻域确为非纸边实心像素
+            ax_i = int(round(avg_x))
+            if not any(is_fg(xx, yy) for yy in range(max(0, y0), min(h, y0 + 4)) for xx in range(max(0, ax_i - 1), min(w, ax_i + 2))): continue
+            center_score = 3.0 * (1.0 - abs(avg_x / w - .5) * 2.0)
+            slim_score = min(4.5, ch_h / max(2.0, avg_w))
+            has_cake_base = False; consec_base = 0; gap_void = 0; base_top = None
+            lx = int(round(base_cx))
             for cy in range(y1 + 1, min(h - 1, y1 + gap_rows)):
-                lx = int(round(base_cx))
-                row_xs = [x for x in range(max(0, lx - base_min_w), min(w, lx + base_min_w + 1)) if is_fg(x, cy)]
-                if len(row_xs) >= base_min_w: has_cake_base = True; break
-                elif len([x for x in range(max(0, lx - 6), min(w, lx + 7)) if is_fg(x, cy)]) == 0: gap_void += 1
-            score = center_score + slim_score + (6.0 if has_cake_base else 0.0) - (6.0 if (not has_cake_base and gap_void >= 4) else 0.0)
+                near_n = sum(1 for x in range(max(0, lx - 12), min(w, lx + 13)) if is_fg(x, cy))
+                if near_n == 0:
+                    gap_void += 1; consec_base = 0
+                    if gap_void >= 5: break
+                    continue
+                l_cnt = sum(1 for x in range(max(0, lx - span_side * 2), max(0, lx - 2)) if is_fg(x, cy))
+                r_cnt = sum(1 for x in range(min(w, lx + 3), min(w, lx + span_side * 2 + 1)) if is_fg(x, cy))
+                if l_cnt >= min_side and r_cnt >= min_side and (l_cnt + r_cnt) >= max(24, int(avg_w * 2.2)):
+                    consec_base += 1
+                    if consec_base >= 2:
+                        base_top = cy - 1; break
+                else:
+                    consec_base = 0
+            if base_top is not None:
+                # 纵深实心体校验：真蛋糕向下至少 h*8.5% 均为实心支撑，淘汰仅 14~20px 厚的上方花环拱顶
+                depth_end = min(h - 1, base_top + max(28, int(h * .085)))
+                depth_rows = max(1, depth_end - base_top)
+                solid_rows = 0
+                for dy_i in range(base_top, depth_end):
+                    mid_cov = sum(1 for x in range(max(0, lx - span_side), min(w, lx + span_side + 1)) if is_fg(x, dy_i))
+                    if mid_cov >= max(14, int(span_side * .8)): solid_rows += 1
+                if solid_rows / float(depth_rows) >= .75:
+                    has_cake_base = True
+            if not has_cake_base: continue
+            score = center_score + slim_score + 6.0
             if score > best_score: best_score, best_pt = score, (avg_x, y0)
-        if best_pt is not None and best_score > 0:
-            return {"leftPct": round(max(22., min(78., best_pt[0] / w * 100.)), 2), "topPct": round(max(2.5, min(46., best_pt[1] / h * 100.)), 2)}
-    pts = []
-    for y in range(int(h * .02), int(h * .24)):
-        xs = [x for x in range(int(w * .22), int(w * .78)) if is_fg(x, y)]
-        if 2 <= len(xs) <= int(w * .16):
-            pts.append((y, sum(xs) / len(xs)))
-            if len(pts) >= 8: break
-    if not pts: return {"leftPct": 44.6, "topPct": 7.5}
-    return {"leftPct": round(max(28., min(72., sum(p[1] for p in pts) / len(pts) / w * 100.)), 2), "topPct": round(max(3.5, min(24., pts[0][0] / h * 100.)), 2)}
+        if best_pt is not None and best_score >= 6.8:
+            return {"leftPct": round(max(24., min(76., best_pt[0] / w * 100.)), 2), "topPct": round(max(2.5, min(44., best_pt[1] / h * 100.)), 2)}
+    return None
 
 
 def make_linen_card(w=520, h=710):
-    """纯 Pillow 现场合成实拍级 3D 高度场粗纺棉麻底布、宏观褶皱凹沟、拧股棉绳锁边与软绒毛边（零外图，耗时 ~0.13s）。"""
-    rng = random.Random(202611)
+    """纯 Pillow 现场合成 V8.4 实拍级粗纺原麻 3D 高度场棉麻底布、厚鼓滚边凹槽、修长紧勒棉绳锁边与不规则手撕毛边（零外图，耗时 ~0.16s）。"""
+    rng = random.Random(20261121)
 
-    # 1. 单张无接缝 256x256 活纱线 3D 高度场瓦片（零双图莫尔条纹 + 纱线微扭曲模拟真纺纱）
-    ts = 256
-    r0 = random.Random(20261101)
-    slub_x = [r0.uniform(-.14, .14) for _ in range(ts // 4 + 2)]
-    slub_y = [r0.uniform(-.14, .14) for _ in range(ts // 4 + 2)]
-    col_x = [r0.uniform(-2.6, 2.6) for _ in range(ts // 4 + 2)]
-    col_y = [r0.uniform(-2.6, 2.6) for _ in range(ts // 4 + 2)]
-    warp_wobble = [math.sin(y * 2.0 * math.pi / ts * 3.0 + .4) * .42 + math.sin(y * 2.0 * math.pi / ts * 7.0) * .18 for y in range(ts)]
-    weft_wobble = [math.sin(x * 2.0 * math.pi / ts * 3.0 + 1.3) * .42 + math.sin(x * 2.0 * math.pi / ts * 7.0) * .18 for x in range(ts)]
+    # 1. 264x264 无缝颗粒感原麻高度场瓦片（264=3x88 零跨边缝，微斜粒化消弭十字格子，暖沙原麻色系）
+    ts = 264
+    r0 = random.Random(20261122)
+    n3 = ts // 3 + 2
+    slub_x = [r0.uniform(-.16, .16) for _ in range(n3)]
+    slub_y = [r0.uniform(-.16, .16) for _ in range(n3)]
+    col_x = [r0.uniform(-1.0, 1.0) for _ in range(n3)]
+    col_y = [r0.uniform(-1.1, 1.1) for _ in range(n3)]
+    warp_wobble = [math.sin(y * 2.0 * math.pi / ts * 4.0 + .5) * .62 + math.sin(y * 2.0 * math.pi / ts * 9.0) * .28 for y in range(ts)]
+    weft_wobble = [math.sin(x * 2.0 * math.pi / ts * 5.0 + 1.2) * .56 + math.sin(x * 2.0 * math.pi / ts * 11.0) * .24 for x in range(ts)]
 
     hg = [0.0] * (ts * ts)
+    k3 = math.pi / 3.0
     for y in range(ts):
-        xw = warp_wobble[y]
-        sy0 = slub_y[y >> 2]
-        row = y * ts
+        xw = warp_wobble[y]; sy0 = slub_y[y // 3]; row = y * ts
         for x in range(ts):
-            fx = (x + xw) * math.pi / 4.0
-            fy = (y + weft_wobble[x]) * math.pi / 4.0
+            # 相邻微斜错相 + 强局部纤维凸起，使整体呈现斜粒沙感而非呆板直角矩阵
+            fx = (x + xw + y * .18) * k3; fy = (y + weft_wobble[x]) * k3
             sxv, syv = math.sin(fx), math.sin(fy)
             wxv, wyv = abs(sxv), abs(syv)
-            warp = wxv * (1.0 + .42 * syv) * (1.0 + slub_x[x >> 2])
-            weft = wyv * (1.0 - .42 * sxv) * (1.0 + sy0)
+            warp = wxv * (1.0 + .30 * syv) * (1.0 + slub_x[x // 3]) * .80
+            weft = wyv * (1.0 - .30 * sxv) * (1.0 + sy0) * 1.10
             top_h = warp if warp >= weft else weft
-            hg[row + x] = .56 * top_h + .24 * (warp + weft) + .20 * (wxv * wyv) + r0.uniform(-.045, .045)
+            hg[row + x] = .50 * top_h + .22 * (warp + weft) + r0.uniform(-.16, .16)
 
     bf = bytearray(ts * ts * 3)
     k = 0
     for y in range(ts):
-        ru = ((y - 1) % ts) * ts
-        rm = y * ts
-        rd = ((y + 1) % ts) * ts
-        cy = col_y[y >> 2]
+        ru = ((y - 1) % ts) * ts; rm = y * ts; rd = ((y + 1) % ts) * ts
+        cy = col_y[y // 3]
         for x in range(ts):
             gx = hg[rm + (x + 1) % ts] - hg[rm + (x - 1) % ts]
             gy = hg[rd + x] - hg[ru + x]
-            lit = (.66 * gx + .75 * gy) * 16.5
-            ao = (hg[rm + x] - .82) * 11.5
-            grain = col_x[x >> 2] + cy + r0.uniform(-2.6, 2.6)
-            if r0.random() < .004:
-                grain -= r0.uniform(9.0, 17.0)
+            lit = (.68 * gx + .73 * gy) * 20.5
+            ao = (hg[rm + x] - .78) * 14.0
+            grain = col_x[x // 3] + cy + r0.uniform(-5.2, 5.2)
+            if r0.random() < .009: grain -= r0.uniform(11.0, 24.0)
             v = lit + ao + grain
-            bf[k] = max(150, min(252, int(233 + v)))
-            bf[k + 1] = max(142, min(247, int(226 + v * .96)))
-            bf[k + 2] = max(126, min(232, int(211 + v * .89)))
+            bf[k] = max(136, min(250, int(223 + v)))
+            bf[k + 1] = max(126, min(244, int(214 + v * .96)))
+            bf[k + 2] = max(110, min(228, int(197 + v * .89)))
             k += 3
     tile = Image.frombytes("RGB", (ts, ts), bytes(bf))
     base = Image.new("RGB", (w, h))
     for ty in range(0, h, ts):
-        for tx in range(0, w, ts):
-            base.paste(tile, (tx, ty))
-    base = base.filter(ImageFilter.GaussianBlur(.30))
+        for tx in range(0, w, ts): base.paste(tile, (tx, ty))
+    base = base.filter(ImageFilter.GaussianBlur(.24))
 
-    # 2. 宏观 3D 布面起伏 + 柔和外翻枕头边（外撑至画布边缘防亮面黑圈） + 缝线凹沟 + 自然窗光
+    # 2. 强立体厚鼓滚边 + 缝线连续勒凹深槽 + 全布自然揉皱明暗层次
     mw, mh_sz = w // 2, h // 2
-    mx, my = 44, 46
-    hm = Image.new("L", (mw, mh_sz), 156)
+    mx, my = 38, 40
+    hm = Image.new("L", (mw, mh_sz), 178)
     hd = ImageDraw.Draw(hm)
-    hd.rectangle([mx // 2 + 2, my // 2 + 2, mw - mx // 2 - 2, mh_sz - my // 2 - 2], fill=130)
-    hd.rectangle([mx // 2, my // 2, mw - mx // 2, mh_sz - my // 2], outline=100, width=4)
-    hd.ellipse([-int(mw * .05), -int(mh_sz * .05), int(mw * .72), int(mh_sz * .62)], fill=136)
-    hd.line([(int(mw * .18), int(mh_sz * .68)), (int(mw * .52), int(mh_sz * .44)), (int(mw * .84), int(mh_sz * .28))], fill=134, width=22, joint="curve")
-    hd.line([(int(mw * .14), int(mh_sz * .32)), (int(mw * .50), int(mh_sz * .54)), (int(mw * .84), int(mh_sz * .72))], fill=124, width=22, joint="curve")
-    hm_full = hm.filter(ImageFilter.GaussianBlur(8.5)).resize((w, h), Image.Resampling.BICUBIC)
+    hd.rectangle([mx // 2 + 3, my // 2 + 3, mw - mx // 2 - 3, mh_sz - my // 2 - 3], fill=124)
+    hd.rectangle([mx // 2, my // 2, mw - mx // 2, mh_sz - my // 2], outline=64, width=6)
+    hd.line([(int(mw * .15), int(mh_sz * .64)), (int(mw * .52), int(mh_sz * .40)), (int(mw * .86), int(mh_sz * .25))], fill=140, width=28, joint="curve")
+    hd.line([(int(mw * .12), int(mh_sz * .28)), (int(mw * .48), int(mh_sz * .54)), (int(mw * .86), int(mh_sz * .74))], fill=112, width=28, joint="curve")
+    hm_full = hm.filter(ImageFilter.GaussianBlur(6.5)).resize((w, h), Image.Resampling.BICUBIC)
 
-    gx_up = ImageChops.subtract(ImageChops.offset(hm_full, 4, 0), ImageChops.offset(hm_full, -4, 0))
-    gx_dn = ImageChops.subtract(ImageChops.offset(hm_full, -4, 0), ImageChops.offset(hm_full, 4, 0))
-    gy_up = ImageChops.subtract(ImageChops.offset(hm_full, 0, 4), ImageChops.offset(hm_full, 0, -4))
-    gy_dn = ImageChops.subtract(ImageChops.offset(hm_full, 0, -4), ImageChops.offset(hm_full, 0, 4))
-    m_lit = ImageChops.add(gx_up.point(lambda p: int(p * .38)), gy_up.point(lambda p: int(p * .45)))
-    m_drk = ImageChops.add(gx_dn.point(lambda p: int(p * .36)), gy_dn.point(lambda p: int(p * .44)))
-    hi_h = hm_full.point(lambda p: max(0, (p - 128) // 4))
-    lo_h = hm_full.point(lambda p: max(0, (128 - p) // 3))
+    cloud = Image.frombytes("L", (16, 22), bytes(rng.randint(102, 152) for _ in range(16 * 22)))
+    cloud = cloud.resize((w, h), Image.Resampling.BICUBIC).filter(ImageFilter.GaussianBlur(24))
+    hm_mix = Image.blend(hm_full, cloud, .28)
+
+    gx_up = ImageChops.subtract(ImageChops.offset(hm_mix, 4, 0), ImageChops.offset(hm_mix, -4, 0))
+    gx_dn = ImageChops.subtract(ImageChops.offset(hm_mix, -4, 0), ImageChops.offset(hm_mix, 4, 0))
+    gy_up = ImageChops.subtract(ImageChops.offset(hm_mix, 0, 4), ImageChops.offset(hm_mix, 0, -4))
+    gy_dn = ImageChops.subtract(ImageChops.offset(hm_mix, 0, -4), ImageChops.offset(hm_mix, 0, 4))
+    m_lit = ImageChops.add(gx_up.point(lambda p: int(p * .62)), gy_up.point(lambda p: int(p * .68)))
+    m_drk = ImageChops.add(gx_dn.point(lambda p: int(p * .60)), gy_dn.point(lambda p: int(p * .65)))
+    hi_h = hm_mix.point(lambda p: max(0, int((p - 126) * .45)))
+    lo_h = hm_mix.point(lambda p: max(0, int((126 - p) * .56)))
     lit_all = ImageChops.add(m_lit, hi_h)
     drk_all = ImageChops.add(m_drk, lo_h)
     base = ImageChops.add(base, Image.merge("RGB", (lit_all, lit_all.point(lambda p: int(p * .97)), lit_all.point(lambda p: int(p * .91)))))
-    base = ImageChops.subtract(base, Image.merge("RGB", (drk_all, drk_all.point(lambda p: int(p * 1.02)), drk_all.point(lambda p: int(p * 1.08)))))
+    base = ImageChops.subtract(base, Image.merge("RGB", (drk_all, drk_all.point(lambda p: int(p * 1.03)), drk_all.point(lambda p: int(p * 1.09)))))
 
+    # 从左上方打入柔和温暖侧光、向右下方自然微沉
     glow = Image.new("L", (mw, mh_sz), 0)
-    ImageDraw.Draw(glow).ellipse([-int(mw * .20), -int(mh_sz * .16), int(mw * .84), int(mh_sz * .74)], fill=13)
+    ImageDraw.Draw(glow).ellipse([-int(mw * .24), -int(mh_sz * .18), int(mw * .82), int(mh_sz * .70)], fill=16)
     g_rgb = glow.filter(ImageFilter.GaussianBlur(28)).resize((w, h), Image.Resampling.BICUBIC)
     base = ImageChops.add(base, Image.merge("RGB", (g_rgb, g_rgb, g_rgb.point(lambda p: int(p * .92)))))
 
-    # 3. 饱满温润粗白棉绳锁边 + 柔和针眼凹窝 + 轻度拧股质感
+    # 3. 连贯深凹缝线沟 + 手工斜倾修长粗白棉绳（告别臃肿小面包块）
     segs = []
     for cnt, p0, p1, horiz, fixed, inv in (
-        (11, mx + 9, w - mx - 9, True, my, -1), (11, mx + 9, w - mx - 9, True, h - my, 1),
-        (16, my + 9, h - my - 9, False, mx, -1), (16, my + 9, h - my - 9, False, w - mx, 1),
+        (11, mx + 6, w - mx - 6, True, my, -1), (11, mx + 6, w - mx - 6, True, h - my, 1),
+        (16, my + 6, h - my - 6, False, mx, -1), (16, my + 6, h - my - 6, False, w - mx, 1),
     ):
-        step = (p1 - p0) / cnt
-        sl = step * .72
+        step = (p1 - p0) / cnt; sl = step * .79
         for i in range(cnt):
-            a = p0 + i * step + (step - sl) * .5
-            b = a + sl + rng.uniform(-1.0, 1.0)
-            j1, j2 = rng.uniform(-1.3, 1.3), rng.uniform(-1.3, 1.3)
-            arch = rng.uniform(.7, 1.8) * inv
-            if horiz:
-                segs.append((a, fixed + j1, (a + b) * .5, fixed + (j1 + j2) * .5 + arch, b, fixed + j2))
-            else:
-                segs.append((fixed + j1, a, fixed + (j1 + j2) * .5 + arch, (a + b) * .5, fixed + j2, b))
+            a = p0 + i * step + (step - sl) * .5 + rng.uniform(-1.5, 1.5)
+            b = a + sl + rng.uniform(-2.0, 2.0)
+            # 每针略微手工倾斜 1.5~3px，并带微小弧拱
+            tilt = rng.uniform(-1.8, 1.8)
+            j1, j2 = rng.uniform(-1.4, 1.4) + tilt, rng.uniform(-1.4, 1.4) - tilt
+            arch = rng.uniform(.8, 2.0) * inv
+            thick = rng.uniform(.88, 1.14)
+            if horiz: segs.append((a, fixed + j1, (a + b) * .5, fixed + (j1 + j2) * .5 + arch, b, fixed + j2, thick))
+            else: segs.append((fixed + j1, a, fixed + (j1 + j2) * .5 + arch, (a + b) * .5, fixed + j2, b, thick))
 
     def qbez(x0, y0, xm, ym, x1, y1, t):
         cx, cy = 2.0 * xm - .5 * (x0 + x1), 2.0 * ym - .5 * (y0 + y1)
         u = 1.0 - t
         return u * u * x0 + 2.0 * u * t * cx + t * t * x1, u * u * y0 + 2.0 * u * t * cy + t * t * y1
 
-    dent_l = Image.new("RGBA", (w, h), (96, 79, 60, 0))
-    dent_d = ImageDraw.Draw(dent_l)
-    sh_l = Image.new("RGBA", (w, h), (92, 76, 58, 0))
-    sh_d = ImageDraw.Draw(sh_l)
-    st_l = Image.new("RGBA", (w, h), (242, 236, 223, 0))
-    st_d = ImageDraw.Draw(st_l)
+    # 沿整条缝线路径压出轻柔连续勒痕沟（主要暗深集中于针眼凹洞与线身投影）
+    groove = Image.new("RGBA", (w, h), (82, 66, 50, 0)); gr_d = ImageDraw.Draw(groove)
+    gr_d.rectangle([mx, my, w - mx, h - my], outline=(82, 66, 50, 62), width=7)
+    dent_l = Image.new("RGBA", (w, h), (62, 47, 34, 0)); dent_d = ImageDraw.Draw(dent_l)
+    sh_l = Image.new("RGBA", (w, h), (70, 56, 42, 0)); sh_d = ImageDraw.Draw(sh_l)
+    st_l = Image.new("RGBA", (w, h), (235, 228, 212, 0)); st_d = ImageDraw.Draw(st_l)
 
-    for x0, y0, xm, ym, x1, y1 in segs:
+    for x0, y0, xm, ym, x1, y1, thick in segs:
         ln = max(1.0, math.hypot(x1 - x0, y1 - y0))
         ux, uy = (x1 - x0) / ln, (y1 - y0) / ln
-        nx, ny = -uy, ux
-        # 仅在每针两头扎入处压出柔和浅暖棕针眼窝（不生硬描黑边）
-        for ex, ey in ((x0, y0), (x1, y1)):
-            dent_d.ellipse([ex - 2.2, ey - 2.2, ex + 2.2, ey + 2.2], fill=(96, 79, 60, 108))
+        for ex, ey, sgn in ((x0, y0, 1.0), (x1, y1, -1.0)):
+            dent_d.line([(ex - ux * sgn * 1.5, ey - uy * sgn * 1.5), (ex + ux * sgn * 4.5, ey + uy * sgn * 4.5)], fill=(68, 52, 36, 152), width=4)
+            dent_d.ellipse([ex - 2.6, ey - 2.6, ex + 2.6, ey + 2.6], fill=(56, 42, 28, 175))
         pts = [qbez(x0, y0, xm, ym, x1, y1, k / 12.0) for k in range(13)]
-        sh_d.line([(px + 1.3, py + 2.5) for px, py in pts], fill=(92, 76, 58, 96), width=6, joint="curve")
+        sh_d.line([(px + 1.4, py + 2.6) for px, py in pts], fill=(66, 52, 38, 140), width=round(5.8 * thick), joint="curve")
         for k in range(12):
             t_mid = (k + .5) / 12.0
-            prof = .36 + .64 * math.sin(t_mid * math.pi) ** .55
+            prof = .38 + .62 * math.sin(t_mid * math.pi) ** .46
             p_a, p_b = pts[k], pts[k + 1]
-            st_d.line([p_a, p_b], fill=(192, 180, 162, 225), width=max(2, round(6.4 * prof)))
-            st_d.line([(p_a[0] - .35, p_a[1] - .45), (p_b[0] - .35, p_b[1] - .45)], fill=(242, 236, 223, 255), width=max(2, round(5.5 * prof)))
-            st_d.line([(p_a[0] - .9, p_a[1] - 1.1), (p_b[0] - .9, p_b[1] - 1.1)], fill=(254, 252, 246, 220), width=max(1, round(2.5 * prof)))
-        # 隐微三股搓捻亮度过渡（晕开后呈真棉线微凹凸，绝非硬斜线）
-        for tt in (.26, .48, .70):
-            bx, by = qbez(x0, y0, xm, ym, x1, y1, tt)
-            twx, twy = nx * 2.0 + ux * 1.4, ny * 2.0 + uy * 1.4
-            st_d.line([(bx - twx, by - twy), (bx + twx, by + twy)], fill=(192, 179, 160, 46), width=2)
-            st_d.line([(bx - twx - .9, by - twy - .9), (bx + twx - .9, by + twy - .9)], fill=(255, 253, 248, 86), width=2)
+            # 顺滑圆润本白粗棉绳（暖棕底边 + 本白饱满主体 + 连续柔亮脊，无生硬切分纹）
+            st_d.line([p_a, p_b], fill=(162, 148, 128, 238), width=max(2, round(6.0 * thick * prof)))
+            st_d.line([(p_a[0] - .35, p_a[1] - .45), (p_b[0] - .35, p_b[1] - .45)], fill=(235, 227, 210, 255), width=max(2, round(4.8 * thick * prof)))
+            st_d.line([(p_a[0] - .85, p_a[1] - 1.05), (p_b[0] - .85, p_b[1] - 1.05)], fill=(254, 251, 245, 228), width=max(1, round(2.2 * thick * prof)))
 
     comp = Image.alpha_composite(
         Image.alpha_composite(
-            Image.alpha_composite(base.convert("RGBA"), dent_l.filter(ImageFilter.GaussianBlur(2.6))),
-            sh_l.filter(ImageFilter.GaussianBlur(2.1)),
+            Image.alpha_composite(
+                Image.alpha_composite(base.convert("RGBA"), groove.filter(ImageFilter.GaussianBlur(3.4))),
+                dent_l.filter(ImageFilter.GaussianBlur(2.3)),
+            ),
+            sh_l.filter(ImageFilter.GaussianBlur(1.9)),
         ),
-        st_l.filter(ImageFilter.GaussianBlur(.52)),
+        st_l.filter(ImageFilter.GaussianBlur(.42)),
     )
 
-    # 4. 自然多频手撕棉麻轮廓 + 明亮乳白绒絮毛边（无珠串、无尖刺）
+    # 4. 更有机不规则的手撕厚布边缘与圆润四角（大凹凸波 + 碎缺口 + 密集短棉絮）
     poly = []
     def walk_edge(cnt_steps, fixed_base, span_start, span_end, horiz, phase):
         off = 0.0
         for s in range(cnt_steps):
             t = s / max(1, cnt_steps - 1)
-            win = math.sin(t * math.pi) ** .35
-            off = off * .68 + rng.uniform(-1.15, 1.15)
-            wave = math.sin(t * math.pi * 5.0 + phase) * 1.7 + math.sin(t * math.pi * 13.0 + phase * 1.7) * .8
-            val = fixed_base + max(-5.0, min(5.0, (off + wave) * (.35 + .65 * win)))
+            # 四角处微圆钝内收，中段自由高低波浪起落
+            c_round = (1.0 - math.sin(t * math.pi) ** .18) * 3.5
+            off = off * .72 + rng.uniform(-1.9, 1.9)
+            wave = math.sin(t * math.pi * 3.8 + phase) * 3.2 + math.sin(t * math.pi * 11.2 + phase * 1.9) * 1.5
+            inward = -c_round if fixed_base > 100 else c_round
+            val = fixed_base + max(-8.0, min(8.0, off + wave)) + inward
             pos = span_start + (span_end - span_start) * t
             poly.append((round(pos), round(val)) if horiz else (round(val), round(pos)))
 
-    walk_edge(160, 15, 16, w - 17, True, 0.3)
-    walk_edge(220, w - 17, 16, h - 17, False, 1.7)
-    walk_edge(160, h - 17, w - 17, 16, True, 3.1)
-    walk_edge(220, 15, h - 17, 16, False, 4.4)
+    walk_edge(160, 15, 16, w - 17, True, 0.4)
+    walk_edge(220, w - 17, 16, h - 17, False, 1.9)
+    walk_edge(160, h - 17, w - 17, 16, True, 3.2)
+    walk_edge(220, 15, h - 17, 16, False, 4.7)
 
-    # 在外缘下铺一层暖白棉绒亮底（RGBA 同色透明底防 Blur 黑边） + 右下厚布侧影
-    edge_cotton = Image.new("RGBA", (w, h), (242, 236, 223, 0))
-    ImageDraw.Draw(edge_cotton).line(poly + [poly[0]], fill=(244, 239, 227, 210), width=7)
-    comp_rgb = Image.alpha_composite(Image.new("RGBA", (w, h), (242, 236, 223, 255)), comp)
-    rim_sh = Image.new("RGBA", (w, h), (168, 154, 134, 0))
+    edge_cotton = Image.new("RGBA", (w, h), (234, 226, 210, 0))
+    ImageDraw.Draw(edge_cotton).line(poly + [poly[0]], fill=(241, 234, 219, 220), width=7)
+    comp_rgb = Image.alpha_composite(Image.new("RGBA", (w, h), (232, 224, 208, 255)), comp)
+    rim_sh = Image.new("RGBA", (w, h), (138, 122, 102, 0))
     br_pts = poly[160:160 + 220 + 160]
-    ImageDraw.Draw(rim_sh).line(br_pts, fill=(168, 154, 134, 108), width=6)
-    comp_rgb = Image.alpha_composite(Image.alpha_composite(comp_rgb, edge_cotton.filter(ImageFilter.GaussianBlur(2.0))), rim_sh.filter(ImageFilter.GaussianBlur(2.6)))
+    ImageDraw.Draw(rim_sh).line(br_pts, fill=(138, 122, 102, 145), width=7)
+    comp_rgb = Image.alpha_composite(Image.alpha_composite(comp_rgb, edge_cotton.filter(ImageFilter.GaussianBlur(1.9))), rim_sh.filter(ImageFilter.GaussianBlur(2.6)))
 
-    am = Image.new("L", (w, h), 0)
-    ad = ImageDraw.Draw(am)
+    am = Image.new("L", (w, h), 0); ad = ImageDraw.Draw(am)
     ad.polygon(poly, fill=255)
     npts = len(poly)
     for k in range(npts):
         px0, py0 = poly[k]
-        px_p, py_p = poly[(k - 2) % npts]
-        px_n, py_n = poly[(k + 2) % npts]
-        tx, ty = px_n - px_p, py_n - py_p
-        tl_v = max(1.0, math.hypot(tx, ty))
+        px_p, py_p = poly[(k - 2) % npts]; px_n, py_n = poly[(k + 2) % npts]
+        tx, ty = px_n - px_p, py_n - py_p; tl_v = max(1.0, math.hypot(tx, ty))
         ox, oy = ty / tl_v, -tx / tl_v
-        # 密集交错的极细柔白棉絮毛边（绝非大圆点串）
         for _ in range(2):
-            ang_j = rng.uniform(-.85, .85)
-            dx0 = ox * math.cos(ang_j) - oy * math.sin(ang_j)
-            dy0 = ox * math.sin(ang_j) + oy * math.cos(ang_j)
-            fl = rng.uniform(1.0, 3.0)
-            ad.line([(px0 - ox * .8, py0 - oy * .8), (px0 + dx0 * fl, py0 + dy0 * fl)], fill=rng.randint(115, 225), width=1)
-        if rng.random() < .15:
-            fl2 = rng.uniform(2.6, 5.2)
-            ex = px0 + ox * fl2 + rng.uniform(-2.0, 2.0)
-            ey = py0 + oy * fl2 + rng.uniform(-2.0, 2.0)
-            mx_f = (px0 + ex) * .5 + rng.uniform(-1.2, 1.2)
-            my_f = (py0 + ey) * .5 + rng.uniform(-1.2, 1.2)
-            ad.line([(px0, py0), (mx_f, my_f), (ex, ey)], fill=rng.randint(75, 145), width=1, joint="curve")
+            ang_j = rng.uniform(-.95, .95)
+            dx0 = ox * math.cos(ang_j) - oy * math.sin(ang_j); dy0 = ox * math.sin(ang_j) + oy * math.cos(ang_j)
+            fl = rng.uniform(1.4, 4.2)
+            ad.line([(px0 - ox * 1.2, py0 - oy * 1.2), (px0 + dx0 * fl, py0 + dy0 * fl)], fill=rng.randint(120, 234), width=1 if rng.random() > .32 else 2)
+        if rng.random() < .22:
+            fl2 = rng.uniform(3.0, 6.2)
+            ex = px0 + ox * fl2 + rng.uniform(-2.4, 2.4); ey = py0 + oy * fl2 + rng.uniform(-2.4, 2.4)
+            mx_f = (px0 + ex) * .5 + rng.uniform(-1.3, 1.3); my_f = (py0 + ey) * .5 + rng.uniform(-1.3, 1.3)
+            ad.line([(px0, py0), (mx_f, my_f), (ex, ey)], fill=rng.randint(85, 175), width=1, joint="curve")
 
     out = comp_rgb.convert("RGBA")
-    out.putalpha(am.filter(ImageFilter.GaussianBlur(.55)))
+    out.putalpha(am.filter(ImageFilter.GaussianBlur(.52)))
     return out
 
 
@@ -545,6 +560,45 @@ def sim(p1, p2):
     return round(1. - sum(abs(x[0]-y[0]) + abs(x[1]-y[1]) + abs(x[2]-y[2]) for x, y in zip(a, b)) / (64*64*765.), 4)
 
 
+def check_character_redraw(chr_p, pt_p, strict):
+    """核查人物图四周是否干净白底/透明且不与真人原照高度雷同，拦截直接传入带背景或未重绘写真照。"""
+    raw = Image.open(chr_p)
+    if max(raw.size) > 320: raw.thumbnail((320, 320), Image.Resampling.BILINEAR)
+    w, h = raw.size
+    has_trans_border = False
+    if raw.mode in ("RGBA", "LA", "PA") or "transparency" in raw.info:
+        ac = raw.convert("RGBA").getchannel("A"); apx = ac.load()
+        if ac.getextrema()[0] < 20:
+            st = max(1, min(w, h) // 48)
+            bs = [apx[x, y] for x in range(0, w, st) for y in (0, h - 1)] + [apx[x, y] for y in range(0, h, st) for x in (0, w - 1)]
+            if bs and sum(1 for v in bs if v < 40) / float(len(bs)) >= .50: has_trans_border = True
+    if not has_trans_border:
+        rgb = raw.convert("RGB"); px = rgb.load(); bd = max(3, min(w, h) // 32)
+        tot = white = 0
+        for y in range(h):
+            for x in range(w):
+                if x < bd or x >= w - bd or y < bd or y >= h - bd:
+                    r, g, b = px[x, y]; tot += 1
+                    if min(r, g, b) >= 224 and max(r, g, b) - min(r, g, b) <= 26: white += 1
+        wr = white / float(max(1, tot))
+        if wr < .60:
+            msg = f"人物图四周白底占比仅 {wr*100:.1f}%，疑似直接传入带背景照片"
+            if strict: raise SystemExit(f"错误：{msg}，已拦截打包。")
+            print(f"[警告] {msg}。", file=sys.stderr)
+    if pt_p and os.path.isfile(pt_p) and sim(chr_p, pt_p) >= .94:
+        msg = "人物图与真人原照高度雷同，疑似未进行手绘重绘"
+        if strict: raise SystemExit(f"错误：{msg}，已拦截打包。")
+        print(f"[警告] {msg}。", file=sys.stderr)
+
+
+def parse_wick_pos(raw):
+    parts = [p.strip() for p in re.split(r"[,，\s]+", str(raw or "").strip()) if p.strip()]
+    if len(parts) != 2: raise ValueError("格式须为 LEFT,TOP")
+    lp, tp = float(parts[0]), float(parts[1])
+    if not (1.0 <= lp <= 99.0 and 1.0 <= tp <= 99.0): raise ValueError("坐标百分比须在 1~99 之间")
+    return {"leftPct": round(lp, 2), "topPct": round(tp, 2)}
+
+
 def norm_b(raw, occ):
     if not isinstance(raw, dict): raise ValueError("祝福语必须是 JSON 对象")
     xm = occ == "christmas"
@@ -571,16 +625,17 @@ def assemble(cfg):
 
 def main():
     ap = argparse.ArgumentParser(description="立体贺卡纯本地刀模抠图与正宗母版打包器")
-    for k in ("--work-dir","--cover","--character","--inside","--inside-top","--inside-bottom","--inside-left","--inside-right","--arch","--cake","--tree","--style-ref","--style-json","--blessing","--recipient","--lines-text","--closing","--signature","--sub-signature","--card-id"): ap.add_argument(k)
+    for k in ("--work-dir","--cover","--character","--portrait","--inside","--inside-top","--inside-bottom","--inside-left","--inside-right","--arch","--cake","--tree","--style-ref","--style-json","--blessing","--recipient","--lines-text","--closing","--signature","--sub-signature","--card-id","--wick-pos"): ap.add_argument(k)
     ap.add_argument("--occasion", choices=("birthday","christmas"), default="birthday")
     ap.add_argument("--fold", choices=("horizontal","vertical"), default="horizontal")
     ap.add_argument("--cover-fit", choices=("auto","contain","crop"), default="auto")
-    ap.add_argument("--strict-redraw-check", action="store_true"); ap.add_argument("--allow-draft", action="store_true"); ap.add_argument("--output", required=True)
+    ap.add_argument("--strict-redraw-check", action="store_true"); ap.add_argument("--allow-draft", action="store_true"); ap.add_argument("--allow-missing-wick", action="store_true"); ap.add_argument("--output", required=True)
     a = ap.parse_args(); wd, vert, xm = (Path(a.work_dir) if a.work_dir else None), a.fold == "vertical", a.occasion == "christmas"
-    for flag, val in (("--cover",a.cover),("--character",a.character),("--inside",a.inside),("--inside-top",a.inside_top),("--inside-bottom",a.inside_bottom),("--inside-left",a.inside_left),("--inside-right",a.inside_right),("--arch",a.arch),("--cake",a.cake),("--tree",a.tree),("--style-ref",a.style_ref),("--style-json",a.style_json),("--blessing",a.blessing)):
+    for flag, val in (("--cover",a.cover),("--character",a.character),("--portrait",a.portrait),("--inside",a.inside),("--inside-top",a.inside_top),("--inside-bottom",a.inside_bottom),("--inside-left",a.inside_left),("--inside-right",a.inside_right),("--arch",a.arch),("--cake",a.cake),("--tree",a.tree),("--style-ref",a.style_ref),("--style-json",a.style_json),("--blessing",a.blessing)):
         if val and not os.path.isfile(val): ap.error(f"指定的 {flag} 文件不存在: {val}")
     cov = a.cover or (find1(wd,"cover_vertical_raw","cover_4x3_raw","cover_raw") if vert else find1(wd,"cover_raw","cover_3x4_raw"))
     chr_p = a.character or find1(wd,"character_raw")
+    pt_p = a.portrait or find1(wd,"portrait","photo","selfie")
     ins = a.inside or (find1(wd,"inside_vertical_raw","inside_2x3_raw") if vert else find1(wd,"inside_raw"))
     tp, bp = a.inside_top or (find1(wd,"inside_top") if vert else None), a.inside_bottom or (find1(wd,"inside_bottom") if vert else None)
     il, ir, ar = a.inside_left or find1(wd,"inside_left"), a.inside_right or find1(wd,"inside_right"), a.arch or find1(wd,"arch_raw","christmas_arch_raw")
@@ -606,6 +661,13 @@ def main():
     if rf and os.path.isfile(rf) and sim(cov, rf) >= .96:
         if a.strict_redraw_check: raise SystemExit("错误：封面与参考图高度雷同，已拦截打包。")
         print("[警告] 封面与参考图相似度过高。", file=sys.stderr)
+    check_character_redraw(chr_p, pt_p, a.strict_redraw_check)
+
+    manual_wk = None
+    if a.wick_pos:
+        if xm: ap.error("圣诞模式禁止传 --wick-pos")
+        try: manual_wk = parse_wick_pos(a.wick_pos)
+        except ValueError as e: ap.error(f"无效 --wick-pos: {e}")
 
     cim = fit_surf(cov, (1000,750) if vert else (750,1000), max_crop_ratio=1.06, mode=a.cover_fit); cov_u, thm = uri(cim, 88), palette(cim)
     sp = a.style_json or (str(wd / "style_profile.json") if wd and (wd / "style_profile.json").is_file() else None)
@@ -633,7 +695,17 @@ def main():
         aru = uri(ast, 86, 880)
     pst = standee(pr, 11, 760, False); ok, rt = check_vis(pst)
     if not ok: raise SystemExit(f"错误：道具图为空白（占比 {rt*100:.2f}%）")
-    tl, wk, pru = (detect_tree_lights(pst) if xm else None), ({"leftPct":44.6,"topPct":7.5} if xm else detect_wick(pst)), uri(pst, 88, 680)
+    tl, pru = (detect_tree_lights(pst) if xm else None), uri(pst, 88, 680)
+    if xm:
+        wk = {"leftPct": 44.6, "topPct": 7.5}
+    elif manual_wk is not None:
+        wk = manual_wk
+    else:
+        wk = detect_wick(pst)
+        if wk is None:
+            if a.strict_redraw_check and not a.allow_missing_wick:
+                raise SystemExit("错误：未能在生日蛋糕中检测到可信蜡烛芯（疑似缺蜡烛或被上方花环遮挡），请重画清晰单蜡烛无火蛋糕，或传入 --wick-pos / --allow-missing-wick。")
+            print("[警告] 未能在生日蛋糕中检测到可信蜡烛芯，已隐藏动态烛火（仍保留轻点与长按许愿交互）。", file=sys.stderr)
     lin_u = uri(make_linen_card(), 78)
 
     rb = {}; bpj = a.blessing or (str(wd / "blessing.json") if wd and (wd / "blessing.json").is_file() else None)

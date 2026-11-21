@@ -74,7 +74,14 @@ function computeSafeLayout() {
 archImgEl.src = $('archBack3').src = $('archBack2').src = archSrc;
 charImgEl.src = $('charBack1').src = $('charBack2').src = $('charBack3').src = charSrc;
 propImgEl.src = $('propBack3').src = $('propBack2').src = propSrc;
-if (!isChristmas && cfg.cakeWickPos && typeof cfg.cakeWickPos.leftPct === 'number') { $('wickAnchor').style.left = cfg.cakeWickPos.leftPct + '%'; $('wickAnchor').style.top = cfg.cakeWickPos.topPct + '%'; }
+/** 定位蛋糕动态烛芯火苗（未检出可信烛芯时安全隐藏动态火苗防止穿帮） */
+if (!isChristmas) {
+  if (cfg.cakeWickPos && typeof cfg.cakeWickPos.leftPct === 'number' && typeof cfg.cakeWickPos.topPct === 'number') {
+    $('wickAnchor').style.display = ''; $('wickAnchor').style.left = cfg.cakeWickPos.leftPct + '%'; $('wickAnchor').style.top = cfg.cakeWickPos.topPct + '%';
+  } else if (cfg.cakeWickPos === null) {
+    $('wickAnchor').style.display = 'none';
+  }
+}
 
 /** 渲染圣诞树顶星与树冠闪烁星灯 */
 function renderChristmasTreeLights() {
