@@ -116,6 +116,8 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:var(--fs);color:var
 .linen-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;pointer-events:none;z-index:0}
 .linen-css-card.has-linen-img{background:none;box-shadow:none;filter:drop-shadow(0 24px 44px rgba(0,0,0,.62));padding:9.5% 11.4% 9.2%;overflow:visible}
 .linen-css-card.has-linen-img .lframe{position:relative;z-index:1;border:none;box-shadow:none;padding:6px 6px 4px}
+.linen-css-card.has-linen-img .lhtxt,.linen-css-card.has-linen-img .linen-body{color:#352c23;text-shadow:0 .9px 0 rgba(255,252,244,.82),.5px .7px .9px rgba(38,28,18,.38)}
+.linen-css-card.has-linen-img .lhdr svg{stroke:#352c23;filter:drop-shadow(0 .8px .4px rgba(255,252,244,.75))}
 .lframe{flex:1;min-height:0;border:2.2px dashed #bca88a;border-radius:2px;padding:18px 20px 16px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;box-shadow:inset 0 0 14px rgba(130,112,86,.13),0 0 0 1px rgba(255,252,245,.55)}
 .lhdr{display:flex;align-items:center;justify-content:center;gap:14px;padding:4px 0 8px;flex-shrink:0;filter:url(#fray-edge-filter);mix-blend-mode:multiply}
 .lhtxt{font-family:var(--fen);font-size:clamp(15px,2vw,19.5px);font-weight:700;letter-spacing:.07em;line-height:1.32;color:#29231e;white-space:nowrap;flex-shrink:0;text-shadow:0 .8px 0 rgba(255,252,244,.75),.4px .6px .7px rgba(32,24,16,.34)}

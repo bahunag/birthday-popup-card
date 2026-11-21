@@ -1,4 +1,4 @@
-"""立体贺卡纯本地刀模抠图与正宗母版拼接器（V8.2 云端直装高保真版，仅依赖 Pillow，零联网零密钥）"""
+"""立体贺卡纯本地刀模抠图与正宗母版拼接器（V8.3 实拍级 3D 高度场棉麻云端保真版，仅依赖 Pillow，零联网零密钥）"""
 import argparse, base64, colorsys, hashlib, io, json, math, os, random, re, sys, uuid
 from collections import deque
 from pathlib import Path
@@ -194,83 +194,208 @@ def detect_wick(rgba):
     return {"leftPct": round(max(28., min(72., sum(p[1] for p in pts) / len(pts) / w * 100.)), 2), "topPct": round(max(3.5, min(24., pts[0][0] / h * 100.)), 2)}
 
 
-def make_linen_card(w=496, h=678):
-    """纯 Pillow 现场合成物理级手撕毛边粗纺天然棉麻底布与立体纺锤平针锁边（耗时 ~0.12s）。"""
+def make_linen_card(w=520, h=710):
+    """纯 Pillow 现场合成实拍级 3D 高度场粗纺棉麻底布、宏观褶皱凹沟、拧股棉绳锁边与软绒毛边（零外图，耗时 ~0.13s）。"""
     rng = random.Random(202611)
-    def build_tile(ts, seed_off):
-        r0 = random.Random(202611 + seed_off)
-        xsl = [r0.randint(-2, 2) for _ in range(ts)]
-        ysl = [r0.randint(-2, 2) for _ in range(ts)]
-        bf = bytearray(ts * ts * 3); i = 0
-        for y in range(ts):
-            py = math.sin(y * math.pi / 2.0) * 4.2; yl = ysl[y]; y2 = y // 2
-            for x in range(ts):
-                px = math.sin(x * math.pi / 2.0) * 4.2; bk = ((x // 2 + y2) % 2) * 2 - 1
-                wv = bk * 4.4 + px + py + xsl[x] + yl + r0.randint(-4, 4)
-                if r0.random() < .016: wv -= r0.randint(10, 20)
-                bf[i] = max(145, min(250, int(232 + wv)))
-                bf[i + 1] = max(135, min(244, int(223 + wv * .96)))
-                bf[i + 2] = max(116, min(226, int(204 + wv * .89)))
-                i += 3
-        return Image.frombytes("RGB", (ts, ts), bytes(bf))
-    t1, t2 = build_tile(128, 0), build_tile(191, 97)
-    b1, b2 = Image.new("RGB", (w, h)), Image.new("RGB", (w, h))
-    for ty in range(0, h, 128):
-        for tx in range(0, w, 128): b1.paste(t1, (tx, ty))
-    for ty in range(0, h, 191):
-        for tx in range(0, w, 191): b2.paste(t2, (tx, ty))
-    base = Image.blend(b1, b2, .45).filter(ImageFilter.GaussianBlur(.25))
-    sw, sh = w // 4, h // 4
-    sh_s = Image.new("L", (sw, sh), 128); sd0 = ImageDraw.Draw(sh_s)
-    sd0.rectangle([1, 1, sw - 2, sh - 2], outline=144, width=6)
-    sd0.rectangle([9, 9, sw - 10, sh - 10], outline=114, width=3)
-    sd0.ellipse([4, 2, int(sw * .72), int(sh * .64)], fill=136)
-    sh_map = sh_s.filter(ImageFilter.GaussianBlur(6)).resize((w, h), Image.Resampling.BICUBIC).point(lambda p: max(110, min(146, p)))
-    delta = sh_map.point(lambda p: max(0, (p - 128) // 2))
-    dark_d = sh_map.point(lambda p: max(0, (128 - p) // 2))
-    base = ImageChops.subtract(ImageChops.add(base, Image.merge("RGB", (delta, delta, delta))), Image.merge("RGB", (dark_d, dark_d, dark_d)))
-    # 四边顺滑纺锤形粗棉绳手缝针脚（两头尖细斜扎入布，彻底自然零圆扣感）
-    mx, my = 40, 42; segs = []
+
+    # 1. 单张无接缝 256x256 活纱线 3D 高度场瓦片（零双图莫尔条纹 + 纱线微扭曲模拟真纺纱）
+    ts = 256
+    r0 = random.Random(20261101)
+    slub_x = [r0.uniform(-.14, .14) for _ in range(ts // 4 + 2)]
+    slub_y = [r0.uniform(-.14, .14) for _ in range(ts // 4 + 2)]
+    col_x = [r0.uniform(-2.6, 2.6) for _ in range(ts // 4 + 2)]
+    col_y = [r0.uniform(-2.6, 2.6) for _ in range(ts // 4 + 2)]
+    warp_wobble = [math.sin(y * 2.0 * math.pi / ts * 3.0 + .4) * .42 + math.sin(y * 2.0 * math.pi / ts * 7.0) * .18 for y in range(ts)]
+    weft_wobble = [math.sin(x * 2.0 * math.pi / ts * 3.0 + 1.3) * .42 + math.sin(x * 2.0 * math.pi / ts * 7.0) * .18 for x in range(ts)]
+
+    hg = [0.0] * (ts * ts)
+    for y in range(ts):
+        xw = warp_wobble[y]
+        sy0 = slub_y[y >> 2]
+        row = y * ts
+        for x in range(ts):
+            fx = (x + xw) * math.pi / 4.0
+            fy = (y + weft_wobble[x]) * math.pi / 4.0
+            sxv, syv = math.sin(fx), math.sin(fy)
+            wxv, wyv = abs(sxv), abs(syv)
+            warp = wxv * (1.0 + .42 * syv) * (1.0 + slub_x[x >> 2])
+            weft = wyv * (1.0 - .42 * sxv) * (1.0 + sy0)
+            top_h = warp if warp >= weft else weft
+            hg[row + x] = .56 * top_h + .24 * (warp + weft) + .20 * (wxv * wyv) + r0.uniform(-.045, .045)
+
+    bf = bytearray(ts * ts * 3)
+    k = 0
+    for y in range(ts):
+        ru = ((y - 1) % ts) * ts
+        rm = y * ts
+        rd = ((y + 1) % ts) * ts
+        cy = col_y[y >> 2]
+        for x in range(ts):
+            gx = hg[rm + (x + 1) % ts] - hg[rm + (x - 1) % ts]
+            gy = hg[rd + x] - hg[ru + x]
+            lit = (.66 * gx + .75 * gy) * 16.5
+            ao = (hg[rm + x] - .82) * 11.5
+            grain = col_x[x >> 2] + cy + r0.uniform(-2.6, 2.6)
+            if r0.random() < .004:
+                grain -= r0.uniform(9.0, 17.0)
+            v = lit + ao + grain
+            bf[k] = max(150, min(252, int(233 + v)))
+            bf[k + 1] = max(142, min(247, int(226 + v * .96)))
+            bf[k + 2] = max(126, min(232, int(211 + v * .89)))
+            k += 3
+    tile = Image.frombytes("RGB", (ts, ts), bytes(bf))
+    base = Image.new("RGB", (w, h))
+    for ty in range(0, h, ts):
+        for tx in range(0, w, ts):
+            base.paste(tile, (tx, ty))
+    base = base.filter(ImageFilter.GaussianBlur(.30))
+
+    # 2. 宏观 3D 布面起伏 + 柔和外翻枕头边（外撑至画布边缘防亮面黑圈） + 缝线凹沟 + 自然窗光
+    mw, mh_sz = w // 2, h // 2
+    mx, my = 44, 46
+    hm = Image.new("L", (mw, mh_sz), 156)
+    hd = ImageDraw.Draw(hm)
+    hd.rectangle([mx // 2 + 2, my // 2 + 2, mw - mx // 2 - 2, mh_sz - my // 2 - 2], fill=130)
+    hd.rectangle([mx // 2, my // 2, mw - mx // 2, mh_sz - my // 2], outline=100, width=4)
+    hd.ellipse([-int(mw * .05), -int(mh_sz * .05), int(mw * .72), int(mh_sz * .62)], fill=136)
+    hd.line([(int(mw * .18), int(mh_sz * .68)), (int(mw * .52), int(mh_sz * .44)), (int(mw * .84), int(mh_sz * .28))], fill=134, width=22, joint="curve")
+    hd.line([(int(mw * .14), int(mh_sz * .32)), (int(mw * .50), int(mh_sz * .54)), (int(mw * .84), int(mh_sz * .72))], fill=124, width=22, joint="curve")
+    hm_full = hm.filter(ImageFilter.GaussianBlur(8.5)).resize((w, h), Image.Resampling.BICUBIC)
+
+    gx_up = ImageChops.subtract(ImageChops.offset(hm_full, 4, 0), ImageChops.offset(hm_full, -4, 0))
+    gx_dn = ImageChops.subtract(ImageChops.offset(hm_full, -4, 0), ImageChops.offset(hm_full, 4, 0))
+    gy_up = ImageChops.subtract(ImageChops.offset(hm_full, 0, 4), ImageChops.offset(hm_full, 0, -4))
+    gy_dn = ImageChops.subtract(ImageChops.offset(hm_full, 0, -4), ImageChops.offset(hm_full, 0, 4))
+    m_lit = ImageChops.add(gx_up.point(lambda p: int(p * .38)), gy_up.point(lambda p: int(p * .45)))
+    m_drk = ImageChops.add(gx_dn.point(lambda p: int(p * .36)), gy_dn.point(lambda p: int(p * .44)))
+    hi_h = hm_full.point(lambda p: max(0, (p - 128) // 4))
+    lo_h = hm_full.point(lambda p: max(0, (128 - p) // 3))
+    lit_all = ImageChops.add(m_lit, hi_h)
+    drk_all = ImageChops.add(m_drk, lo_h)
+    base = ImageChops.add(base, Image.merge("RGB", (lit_all, lit_all.point(lambda p: int(p * .97)), lit_all.point(lambda p: int(p * .91)))))
+    base = ImageChops.subtract(base, Image.merge("RGB", (drk_all, drk_all.point(lambda p: int(p * 1.02)), drk_all.point(lambda p: int(p * 1.08)))))
+
+    glow = Image.new("L", (mw, mh_sz), 0)
+    ImageDraw.Draw(glow).ellipse([-int(mw * .20), -int(mh_sz * .16), int(mw * .84), int(mh_sz * .74)], fill=13)
+    g_rgb = glow.filter(ImageFilter.GaussianBlur(28)).resize((w, h), Image.Resampling.BICUBIC)
+    base = ImageChops.add(base, Image.merge("RGB", (g_rgb, g_rgb, g_rgb.point(lambda p: int(p * .92)))))
+
+    # 3. 饱满温润粗白棉绳锁边 + 柔和针眼凹窝 + 轻度拧股质感
+    segs = []
     for cnt, p0, p1, horiz, fixed, inv in (
-        (11, mx + 6, w - mx - 6, True, my, -1), (11, mx + 6, w - mx - 6, True, h - my, 1),
-        (15, my + 6, h - my - 6, False, mx, -1), (15, my + 6, h - my - 6, False, w - mx, 1),
+        (11, mx + 9, w - mx - 9, True, my, -1), (11, mx + 9, w - mx - 9, True, h - my, 1),
+        (16, my + 9, h - my - 9, False, mx, -1), (16, my + 9, h - my - 9, False, w - mx, 1),
     ):
-        step = (p1 - p0) / cnt; sl = step * .66
+        step = (p1 - p0) / cnt
+        sl = step * .72
         for i in range(cnt):
-            a = p0 + i * step + (step - sl) * .5; b = a + sl + rng.uniform(-1.2, 1.2)
-            j1, j2 = rng.uniform(-1.4, 1.4), rng.uniform(-1.4, 1.4); arch = rng.uniform(.7, 1.8) * inv
-            if horiz: segs.append((round(a), round(fixed + j1), round((a + b) * .5), round(fixed + (j1 + j2) * .5 + arch), round(b), round(fixed + j2)))
-            else: segs.append((round(fixed + j1), round(a), round(fixed + (j1 + j2) * .5 + arch), round((a + b) * .5), round(fixed + j2), round(b)))
-    sh_l = Image.new("RGBA", (w, h), (0, 0, 0, 0)); sh_d = ImageDraw.Draw(sh_l)
+            a = p0 + i * step + (step - sl) * .5
+            b = a + sl + rng.uniform(-1.0, 1.0)
+            j1, j2 = rng.uniform(-1.3, 1.3), rng.uniform(-1.3, 1.3)
+            arch = rng.uniform(.7, 1.8) * inv
+            if horiz:
+                segs.append((a, fixed + j1, (a + b) * .5, fixed + (j1 + j2) * .5 + arch, b, fixed + j2))
+            else:
+                segs.append((fixed + j1, a, fixed + (j1 + j2) * .5 + arch, (a + b) * .5, fixed + j2, b))
+
+    def qbez(x0, y0, xm, ym, x1, y1, t):
+        cx, cy = 2.0 * xm - .5 * (x0 + x1), 2.0 * ym - .5 * (y0 + y1)
+        u = 1.0 - t
+        return u * u * x0 + 2.0 * u * t * cx + t * t * x1, u * u * y0 + 2.0 * u * t * cy + t * t * y1
+
+    dent_l = Image.new("RGBA", (w, h), (96, 79, 60, 0))
+    dent_d = ImageDraw.Draw(dent_l)
+    sh_l = Image.new("RGBA", (w, h), (92, 76, 58, 0))
+    sh_d = ImageDraw.Draw(sh_l)
+    st_l = Image.new("RGBA", (w, h), (242, 236, 223, 0))
+    st_d = ImageDraw.Draw(st_l)
+
     for x0, y0, xm, ym, x1, y1 in segs:
-        sh_d.line([(x0 + 1, y0 + 2), (xm + 2, ym + 3), (x1 + 1, y1 + 2)], fill=(96, 80, 62, 128), width=4, joint="curve")
-    sh_l = sh_l.filter(ImageFilter.GaussianBlur(1.5))
-    st_l = Image.new("RGBA", (w, h), (0, 0, 0, 0)); st_d = ImageDraw.Draw(st_l)
-    for x0, y0, xm, ym, x1, y1 in segs:
-        x_a1, y_a1 = round(x0 + (xm - x0) * .28), round(y0 + (ym - y0) * .28)
-        x_b1, y_b1 = round(x1 + (xm - x1) * .28), round(y1 + (ym - y1) * .28)
-        x_a2, y_a2 = round(x0 + (xm - x0) * .55), round(y0 + (ym - y0) * .55)
-        x_b2, y_b2 = round(x1 + (xm - x1) * .55), round(y1 + (ym - y1) * .55)
-        st_d.line([(x0, y0), (xm, ym), (x1, y1)], fill=(186, 173, 152, 225), width=2, joint="curve")
-        st_d.line([(x_a1, y_a1), (xm, ym), (x_b1, y_b1)], fill=(235, 227, 210, 255), width=4, joint="curve")
-        st_d.line([(x_a2, y_a2), (xm, ym), (x_b2, y_b2)], fill=(252, 248, 240, 235), width=5, joint="curve")
-        st_d.line([(x_a2 - 1, y_a2 - 1), (xm - 1, ym - 1), (x_b2 - 1, y_b2 - 1)], fill=(255, 253, 248, 200), width=2, joint="curve")
-    comp = Image.alpha_composite(Image.alpha_composite(base.convert("RGBA"), sh_l), st_l)
-    ring_m = Image.new("L", (w, h), 255); ImageDraw.Draw(ring_m).rectangle([18, 18, w - 19, h - 19], fill=0)
-    comp_rgb = Image.composite(Image.new("RGB", (w, h), (239, 233, 219)), comp.convert("RGB"), ring_m.filter(ImageFilter.GaussianBlur(3.8)).point(lambda p: int(p * .62)))
-    am = Image.new("L", (w, h), 0); ad = ImageDraw.Draw(am); poly = []
-    for x in range(13, w - 13, 5): poly.append((x, 14 + rng.randint(-3, 3)))
-    for y in range(13, h - 13, 5): poly.append((w - 15 + rng.randint(-3, 3), y))
-    for x in range(w - 13, 13, -5): poly.append((x, h - 15 + rng.randint(-3, 3)))
-    for y in range(h - 13, 13, -5): poly.append((14 + rng.randint(-3, 3), y))
+        ln = max(1.0, math.hypot(x1 - x0, y1 - y0))
+        ux, uy = (x1 - x0) / ln, (y1 - y0) / ln
+        nx, ny = -uy, ux
+        # 仅在每针两头扎入处压出柔和浅暖棕针眼窝（不生硬描黑边）
+        for ex, ey in ((x0, y0), (x1, y1)):
+            dent_d.ellipse([ex - 2.2, ey - 2.2, ex + 2.2, ey + 2.2], fill=(96, 79, 60, 108))
+        pts = [qbez(x0, y0, xm, ym, x1, y1, k / 12.0) for k in range(13)]
+        sh_d.line([(px + 1.3, py + 2.5) for px, py in pts], fill=(92, 76, 58, 96), width=6, joint="curve")
+        for k in range(12):
+            t_mid = (k + .5) / 12.0
+            prof = .36 + .64 * math.sin(t_mid * math.pi) ** .55
+            p_a, p_b = pts[k], pts[k + 1]
+            st_d.line([p_a, p_b], fill=(192, 180, 162, 225), width=max(2, round(6.4 * prof)))
+            st_d.line([(p_a[0] - .35, p_a[1] - .45), (p_b[0] - .35, p_b[1] - .45)], fill=(242, 236, 223, 255), width=max(2, round(5.5 * prof)))
+            st_d.line([(p_a[0] - .9, p_a[1] - 1.1), (p_b[0] - .9, p_b[1] - 1.1)], fill=(254, 252, 246, 220), width=max(1, round(2.5 * prof)))
+        # 隐微三股搓捻亮度过渡（晕开后呈真棉线微凹凸，绝非硬斜线）
+        for tt in (.26, .48, .70):
+            bx, by = qbez(x0, y0, xm, ym, x1, y1, tt)
+            twx, twy = nx * 2.0 + ux * 1.4, ny * 2.0 + uy * 1.4
+            st_d.line([(bx - twx, by - twy), (bx + twx, by + twy)], fill=(192, 179, 160, 46), width=2)
+            st_d.line([(bx - twx - .9, by - twy - .9), (bx + twx - .9, by + twy - .9)], fill=(255, 253, 248, 86), width=2)
+
+    comp = Image.alpha_composite(
+        Image.alpha_composite(
+            Image.alpha_composite(base.convert("RGBA"), dent_l.filter(ImageFilter.GaussianBlur(2.6))),
+            sh_l.filter(ImageFilter.GaussianBlur(2.1)),
+        ),
+        st_l.filter(ImageFilter.GaussianBlur(.52)),
+    )
+
+    # 4. 自然多频手撕棉麻轮廓 + 明亮乳白绒絮毛边（无珠串、无尖刺）
+    poly = []
+    def walk_edge(cnt_steps, fixed_base, span_start, span_end, horiz, phase):
+        off = 0.0
+        for s in range(cnt_steps):
+            t = s / max(1, cnt_steps - 1)
+            win = math.sin(t * math.pi) ** .35
+            off = off * .68 + rng.uniform(-1.15, 1.15)
+            wave = math.sin(t * math.pi * 5.0 + phase) * 1.7 + math.sin(t * math.pi * 13.0 + phase * 1.7) * .8
+            val = fixed_base + max(-5.0, min(5.0, (off + wave) * (.35 + .65 * win)))
+            pos = span_start + (span_end - span_start) * t
+            poly.append((round(pos), round(val)) if horiz else (round(val), round(pos)))
+
+    walk_edge(160, 15, 16, w - 17, True, 0.3)
+    walk_edge(220, w - 17, 16, h - 17, False, 1.7)
+    walk_edge(160, h - 17, w - 17, 16, True, 3.1)
+    walk_edge(220, 15, h - 17, 16, False, 4.4)
+
+    # 在外缘下铺一层暖白棉绒亮底（RGBA 同色透明底防 Blur 黑边） + 右下厚布侧影
+    edge_cotton = Image.new("RGBA", (w, h), (242, 236, 223, 0))
+    ImageDraw.Draw(edge_cotton).line(poly + [poly[0]], fill=(244, 239, 227, 210), width=7)
+    comp_rgb = Image.alpha_composite(Image.new("RGBA", (w, h), (242, 236, 223, 255)), comp)
+    rim_sh = Image.new("RGBA", (w, h), (168, 154, 134, 0))
+    br_pts = poly[160:160 + 220 + 160]
+    ImageDraw.Draw(rim_sh).line(br_pts, fill=(168, 154, 134, 108), width=6)
+    comp_rgb = Image.alpha_composite(Image.alpha_composite(comp_rgb, edge_cotton.filter(ImageFilter.GaussianBlur(2.0))), rim_sh.filter(ImageFilter.GaussianBlur(2.6)))
+
+    am = Image.new("L", (w, h), 0)
+    ad = ImageDraw.Draw(am)
     ad.polygon(poly, fill=255)
-    for x0, y0, x1, y1, nx, ny in ((14, 14, w - 14, 14, 0, -1), (w - 15, 14, w - 15, h - 14, 1, 0), (14, h - 15, w - 14, h - 15, 0, 1), (14, 14, 14, h - 14, -1, 0)):
-        steps = abs((x1 - x0) + (y1 - y0)) // 2
-        for k in range(steps):
-            t = k / max(1, steps - 1); px0 = x0 + (x1 - x0) * t; py0 = y0 + (y1 - y0) * t
-            fl = rng.randint(2, 12); ax = nx * fl + rng.uniform(-4.0, 4.0); ay = ny * fl + rng.uniform(-4.0, 4.0)
-            ad.line([(px0 - nx * 2, py0 - ny * 2), (px0 + ax, py0 + ay)], fill=rng.randint(100, 226), width=1 if rng.random() > .25 else 2)
-    out = comp_rgb.convert("RGBA"); out.putalpha(am.filter(ImageFilter.GaussianBlur(.42)))
+    npts = len(poly)
+    for k in range(npts):
+        px0, py0 = poly[k]
+        px_p, py_p = poly[(k - 2) % npts]
+        px_n, py_n = poly[(k + 2) % npts]
+        tx, ty = px_n - px_p, py_n - py_p
+        tl_v = max(1.0, math.hypot(tx, ty))
+        ox, oy = ty / tl_v, -tx / tl_v
+        # 密集交错的极细柔白棉絮毛边（绝非大圆点串）
+        for _ in range(2):
+            ang_j = rng.uniform(-.85, .85)
+            dx0 = ox * math.cos(ang_j) - oy * math.sin(ang_j)
+            dy0 = ox * math.sin(ang_j) + oy * math.cos(ang_j)
+            fl = rng.uniform(1.0, 3.0)
+            ad.line([(px0 - ox * .8, py0 - oy * .8), (px0 + dx0 * fl, py0 + dy0 * fl)], fill=rng.randint(115, 225), width=1)
+        if rng.random() < .15:
+            fl2 = rng.uniform(2.6, 5.2)
+            ex = px0 + ox * fl2 + rng.uniform(-2.0, 2.0)
+            ey = py0 + oy * fl2 + rng.uniform(-2.0, 2.0)
+            mx_f = (px0 + ex) * .5 + rng.uniform(-1.2, 1.2)
+            my_f = (py0 + ey) * .5 + rng.uniform(-1.2, 1.2)
+            ad.line([(px0, py0), (mx_f, my_f), (ex, ey)], fill=rng.randint(75, 145), width=1, joint="curve")
+
+    out = comp_rgb.convert("RGBA")
+    out.putalpha(am.filter(ImageFilter.GaussianBlur(.55)))
     return out
 
 
